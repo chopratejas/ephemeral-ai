@@ -164,8 +164,12 @@ def poll_for_task() -> dict | None:
     """GET the next task assigned to this worker. Returns None if no task."""
     url = f"{ORCHESTRATOR_URL}/api/v1/workers/{WORKER_ID}/task"
     result = _http_request(url, method="GET")
-    if result and result.get("task_id"):
-        return result
+    if not result:
+        return None
+    # API wraps in {"task": {...}} - unwrap it
+    task = result.get("task") or result
+    if task and task.get("task_id"):
+        return task
     return None
 
 
@@ -428,11 +432,17 @@ def install_python_deps(code: str) -> None:
     if to_install:
         pkgs = sorted(to_install)
         log(f"Installing Python dependencies: {', '.join(pkgs)}")
+        # Try with --break-system-packages first, fall back without
+        cmd = [sys.executable, "-m", "pip", "install", "--quiet"]
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--quiet",
-             "--break-system-packages"] + pkgs,
+            cmd + ["--break-system-packages"] + pkgs,
             capture_output=True, text=True, timeout=120,
         )
+        if result.returncode != 0 and "no such option" in result.stderr:
+            result = subprocess.run(
+                cmd + pkgs,
+                capture_output=True, text=True, timeout=120,
+            )
         if result.returncode != 0:
             log(f"pip install warning: {result.stderr[:500]}")
 

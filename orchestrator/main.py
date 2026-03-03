@@ -425,6 +425,7 @@ async def _wait_for_completion(task: Task, timeout: int) -> None:
 
 async def _pool_reaper_loop() -> None:
     """Destroy expired workers and orphaned Droplets."""
+    await asyncio.sleep(30)  # Let app fully start before first reap
     logger.info("Pool reaper started (interval=60s)")
     while True:
         try:

@@ -162,8 +162,10 @@ class WarmPool:
         """Return a worker to the idle pool after its task finishes."""
         with self._lock:
             worker = self._get_or_raise(worker_id)
+            was_busy = worker.status == "busy"
             worker.status = "idle"
-            worker.tasks_completed += 1
+            if was_busy:
+                worker.tasks_completed += 1
             worker.current_task_id = None
             worker.last_activity = datetime.now(timezone.utc)
 
