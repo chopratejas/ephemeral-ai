@@ -1,0 +1,28 @@
+[project]
+name = "ephemeral-ai"
+version = "0.1.0"
+description = "JIT Agentic Infrastructure - Infrastructure for the lifetime of a thought"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "openai>=1.50.0",
+    "pydo>=0.6.0",
+    "boto3>=1.35.0",
+    "jsonschema>=4.23.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "httpx>=0.27.0",
+    "websockets>=13.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.12",
+]
+
+[project.scripts]
+ephemeral = "orchestrator.main:run"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"

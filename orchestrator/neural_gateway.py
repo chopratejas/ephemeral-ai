@@ -1,0 +1,164 @@
+"""Neural Gateway - LLM-powered infrastructure reasoning via DigitalOcean Gradient."""
+
+import json
+import logging
+import uuid
+
+from openai import OpenAI
+
+from .config import settings
+from .models import Manifest
+
+logger = logging.getLogger("ephemeral.gateway")
+
+SYSTEM_PROMPT = """\
+You are Ephemeral, an infrastructure-aware AI. Given a user's task description, \
+you analyze the task and produce a Manifest JSON that specifies the compute resources \
+and estimated complexity needed to accomplish it in an ephemeral DigitalOcean Droplet.
+
+You do NOT generate the actual code. A workbench agent inside the Droplet will handle \
+code generation and self-healing execution. Your job is to:
+1. Understand what the task requires (CPU, RAM, network, packages)
+2. Choose the right Droplet size
+3. Estimate complexity and timeout
+4. Classify the task
+
+Output ONLY valid JSON. No markdown, no explanation, no code fences.
+
+SCHEMA:
+{
+  "task_id": "<uuid>",
+  "intent": {
+    "summary": "<1-2 sentence description of what will be done>",
+    "category": "<one of: data_processing, web_scraping, code_execution, file_conversion, api_integration, analysis, batch_processing>",
+    "complexity": "<simple|moderate|complex>",
+    "reasoning": "<explain WHY you chose this Droplet size and timeout>"
+  },
+  "infra": {
+    "slug": "<droplet size slug>",
+    "region": "sfo3",
+    "snapshot_id": null
+  },
+  "runtime": {
+    "language": "python",
+    "version": "3.11",
+    "dependencies": ["<likely pip packages needed>"]
+  },
+  "lifecycle": {
+    "timeout_seconds": <60-3600>,
+    "estimated_attempts": <1-3>,
+    "termination": "wait_for_upload",
+    "output_format": "presigned_url"
+  },
+  "cost_estimate": {
+    "droplet_hourly_rate": <float>,
+    "estimated_duration_seconds": <int>,
+    "estimated_cost_usd": <float>,
+    "always_on_monthly_cost": <float>,
+    "savings_percentage": <float>
+  }
+}
+
+RESOURCE SIZING - choose the SMALLEST Droplet that works:
+- Simple scripts, text generation, small API calls: s-1vcpu-512mb-10gb ($0.00595/hr)
+- Light data work, web scraping, file processing <50MB: s-1vcpu-1gb ($0.00893/hr)
+- Medium data (50-300MB), multiple API calls: s-1vcpu-2gb ($0.01786/hr)
+- Heavy data (300MB-1GB), ML inference, complex processing: s-2vcpu-4gb ($0.03571/hr)
+- Very large datasets (>1GB), parallel processing: s-4vcpu-8gb ($0.07143/hr)
+
+COMPLEXITY GUIDE:
+- simple: Single-step task, likely succeeds first try. Timeout: 60-120s.
+- moderate: Multi-step or needs external API calls. May need 1-2 retries. Timeout: 120-300s.
+- complex: Data processing, scraping, multi-API orchestration. May need retries. Timeout: 300-600s.
+
+COST ESTIMATE:
+- always_on_monthly_cost = droplet_hourly_rate * 730
+- estimated_cost_usd = droplet_hourly_rate (minimum 1 hour billing)
+- savings_percentage = (1 - estimated_cost_usd / always_on_monthly_cost) * 100
+"""
+
+
+def _create_client() -> OpenAI:
+    return OpenAI(
+        base_url=settings.gradient_base_url,
+        api_key=settings.gradient_model_access_key,
+    )
+
+
+def generate_manifest(
+    prompt: str,
+    task_id: str | None = None,
+    input_files: list[dict] | None = None,
+) -> Manifest:
+    """Call Gradient AI to analyze a task and generate an infrastructure Manifest.
+
+    The LLM decides on resource sizing, timeout, and complexity.
+    Code generation is handled by the workbench agent inside the Droplet.
+    """
+    client = _create_client()
+    tid = task_id or str(uuid.uuid4())
+
+    user_message = prompt
+    if input_files:
+        file_info = "\n".join(
+            f"- {f.get('url', 'unknown')} -> {f.get('filename', 'file')}"
+            for f in input_files
+        )
+        user_message += f"\n\nInput files available:\n{file_info}"
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            logger.info(
+                "Generating manifest (attempt %d/3) for task %s",
+                attempt + 1,
+                tid,
+            )
+            response = client.chat.completions.create(
+                model=settings.gradient_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.1,
+                max_completion_tokens=2048,
+            )
+
+            raw = response.choices[0].message.content.strip()
+            # Strip markdown code fences if the LLM wraps output
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1]
+                if raw.endswith("```"):
+                    raw = raw[: raw.rfind("```")]
+                raw = raw.strip()
+
+            data = json.loads(raw)
+            data["task_id"] = tid
+
+            # Workbench architecture: no payload code in manifest
+            # Provide a stub payload so the model validates
+            if "payload" not in data:
+                data["payload"] = {
+                    "code": "# Code generated by workbench agent",
+                    "entry_command": "python3 /opt/workbench/agent.py",
+                }
+
+            manifest = Manifest.model_validate(data)
+
+            logger.info(
+                "Manifest generated: slug=%s, complexity=%s, timeout=%ds",
+                manifest.infra.slug,
+                manifest.intent.reasoning[:80],
+                manifest.lifecycle.timeout_seconds,
+            )
+            return manifest
+
+        except (json.JSONDecodeError, Exception) as e:
+            last_error = e
+            logger.warning(
+                "Manifest generation attempt %d failed: %s", attempt + 1, e
+            )
+
+    raise RuntimeError(
+        f"Failed to generate valid manifest after 3 attempts: {last_error}"
+    )
