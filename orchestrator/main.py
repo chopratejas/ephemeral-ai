@@ -63,6 +63,9 @@ async def lifespan(app: FastAPI):
     logger.info("Max Droplets: %d, Budget: $%.2f/day",
                 settings.max_concurrent_droplets, settings.daily_budget_usd)
 
+    # Rediscover existing Droplets (survives orchestrator restarts)
+    await _rediscover_warm_pool()
+
     # Background tasks
     pool_reaper = asyncio.create_task(_pool_reaper_loop())
     yield
@@ -231,11 +234,27 @@ async def _run_audit(task: Task, req: AuditRequest) -> None:
     task_id = task.task_id
 
     try:
-        # Phase 1: Planning (lightweight - no LLM needed for audits)
+        # Phase 1: Scout - LLM analyzes the repo to determine Droplet size
         _record_phase(task, TaskPhase.PLANNING)
         await ws_manager.broadcast(task_id, "planning", {"type": "security_audit", "repo": req.repo_url})
 
-        slug = "s-1vcpu-2gb"  # Audits need RAM for cloning + analysis tools
+        from .scout import scout_repo
+        scout_profile = await asyncio.to_thread(scout_repo, req.repo_url, req.branch)
+        slug = scout_profile.get("slug", "s-1vcpu-2gb")
+
+        logger.info(
+            "Scout: %s → slug=%s lang=%s framework=%s",
+            req.repo_url, slug,
+            scout_profile.get("language"),
+            scout_profile.get("framework"),
+        )
+        await ws_manager.broadcast(task_id, "scouted", {
+            "slug": slug,
+            "language": scout_profile.get("language"),
+            "framework": scout_profile.get("framework"),
+            "description": scout_profile.get("description", ""),
+        })
+
         cost_report = build_cost_report(slug)
         task.cost = cost_report
 
@@ -592,6 +611,51 @@ async def _wait_for_completion(task: Task, timeout: int) -> None:
 # ========================================
 # Background: Pool Reaper
 # ========================================
+
+
+async def _rediscover_warm_pool() -> None:
+    """On startup, find existing ephemeral-ai Droplets and re-register them.
+
+    This survives orchestrator restarts - Droplets keep running and polling,
+    we just need to know about them so we can route tasks to them.
+    """
+    try:
+        from .droplet_manager import list_ephemeral_droplets
+        droplets = await list_ephemeral_droplets()
+        for d in droplets:
+            droplet_id = d["id"]
+            name = d.get("name", "")
+            ip = ""
+            for net in d.get("networks", {}).get("v4", []):
+                if net.get("type") == "public":
+                    ip = net["ip_address"]
+                    break
+            size = d.get("size_slug", "s-1vcpu-1gb")
+            # Extract worker_id from name (format: worker-{id[:8]})
+            worker_id = name.replace("worker-", "") + "-rediscovered"
+
+            # Extract worker_id from tags
+            for tag in d.get("tags", []):
+                if tag.startswith("worker-"):
+                    worker_id = tag.replace("worker-", "")
+
+            warm_pool.add_worker(
+                worker_id=worker_id,
+                droplet_id=droplet_id,
+                droplet_ip=ip,
+                size_slug=size,
+            )
+            logger.info(
+                "Rediscovered Droplet %d (%s) ip=%s -> warm pool",
+                droplet_id, name, ip,
+            )
+
+        if droplets:
+            logger.info("Rediscovered %d Droplets into warm pool", len(droplets))
+        else:
+            logger.info("No existing Droplets found")
+    except Exception as e:
+        logger.error("Warm pool rediscovery failed: %s", e)
 
 
 async def _pool_reaper_loop() -> None:

@@ -474,40 +474,9 @@ export function useAudit() {
           setElapsed((Date.now() - startTime) / 1000);
         }, 100);
 
-        // Phase progress mapping: show which layers are likely active based on elapsed time
-        const phaseTimings = [
-          { after: 0, layer: -1 },     // provisioning
-          { after: 35, layer: 0 },     // SAST starts after boot
-          { after: 40, layer: 1 },     // Dependencies
-          { after: 45, layer: 2 },     // Secrets
-          { after: 48, layer: 3 },     // Licenses
-          { after: 51, layer: 4 },     // Tests
-          { after: 54, layer: 5 },     // Repo Health
-          { after: 57, layer: 6 },     // AI Synthesis (takes longest)
-        ];
-
-        // Estimated progress updater based on elapsed time
-        const progressTimer = setInterval(() => {
-          const elapsed = (Date.now() - startTime) / 1000;
-          setLayers((prev) => {
-            const updated = prev.map((l) => ({ ...l }));
-            for (const pt of phaseTimings) {
-              if (elapsed > pt.after && pt.layer >= 0 && pt.layer < 7) {
-                if (updated[pt.layer].status === 'pending') {
-                  updated[pt.layer] = { ...updated[pt.layer], status: 'running' };
-                }
-                // Mark previous layers as done
-                for (let i = 0; i < pt.layer; i++) {
-                  if (updated[i].status === 'running' || updated[i].status === 'pending') {
-                    updated[i] = { ...updated[i], status: 'done', duration: (pt.after - phaseTimings[i+1]?.after || 3) };
-                  }
-                }
-              }
-            }
-            return updated;
-          });
-        }, 2000);
-        simulationRef.current.push(progressTimer as unknown as ReturnType<typeof setTimeout>);
+        // No fake timers - layer status comes ONLY from real log data
+        // This variable exists only so the cleanup in the poll can reference it
+        const progressTimer: ReturnType<typeof setInterval> | null = null;
 
         // Poll for status + logs every 3 seconds
         const poll = setInterval(async () => {
