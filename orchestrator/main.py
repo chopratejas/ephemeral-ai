@@ -35,8 +35,8 @@ from .models import (
     WorkerTaskResponse,
 )
 from .neural_gateway import generate_manifest
-from .pipeline import PipelineManager, decompose_task
-from .security import budget_tracker, enforce_min_slug, rate_limiter, validate_droplet_slug
+# pipeline.py exists but not integrated into API yet (future: multi-step audits)
+from .security import budget_tracker, enforce_min_slug, rate_limiter
 from .spaces import check_task_done, generate_upload_presigned_urls, list_task_results
 from .task_router import TaskQueue, RoutingDecision, route_task, task_queue
 from .warm_pool import WarmPool
@@ -52,7 +52,6 @@ logger = logging.getLogger("ephemeral.main")
 # --- State ---
 tasks: dict[str, Task] = {}
 warm_pool = WarmPool()
-pipeline_manager = PipelineManager()
 
 
 # --- Lifespan ---
