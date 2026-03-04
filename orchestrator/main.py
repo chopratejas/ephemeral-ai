@@ -266,6 +266,8 @@ async def _run_audit(task: Task, req: AuditRequest) -> None:
     try:
         # Phase 1: Scout - LLM analyzes the repo to determine Droplet size
         _record_phase(task, TaskPhase.PLANNING)
+        task.logs.append(f"Starting audit: {req.repo_url}")
+        task.logs.append("Scouting repo via GitHub API...")
         await ws_manager.broadcast(task_id, "planning", {"type": "security_audit", "repo": req.repo_url})
 
         from .scout import scout_repo
@@ -287,6 +289,8 @@ async def _run_audit(task: Task, req: AuditRequest) -> None:
 
         cost_report = build_cost_report(slug)
         task.cost = cost_report
+
+        task.logs.append(f"Scouted repo: {scout_profile.get('language', '?')}/{scout_profile.get('framework', '?')} → {slug}")
 
         if not budget_tracker.check_budget(cost_report.total_cost_usd):
             raise Exception("Daily budget exceeded")
@@ -310,10 +314,13 @@ async def _run_audit(task: Task, req: AuditRequest) -> None:
             task.droplet.id = worker.droplet_id
             task.droplet.ip = worker.droplet_ip
             task.droplet.slug = worker.size_slug
+            task.logs.append(f"Warm pool hit: routed to worker {worker.worker_id[:8]} ({worker.droplet_ip})")
+            task.logs.append("Task queued. Waiting for worker to pick it up...")
             await ws_manager.broadcast(task_id, "warm_hit", {"worker_id": worker.worker_id[:8]})
             logger.info("Audit %s routed to warm worker %s", task_id[:8], worker.worker_id[:8])
         else:
             # Cold start
+            task.logs.append("No warm worker available. Creating new droplet...")
             await ws_manager.broadcast(task_id, "provisioning", {"reason": "no_warm_worker"})
 
             active = await count_active_droplets()
@@ -321,10 +328,13 @@ async def _run_audit(task: Task, req: AuditRequest) -> None:
                 raise Exception(f"Max Droplets reached ({settings.max_concurrent_droplets})")
 
             worker_id = str(uuid.uuid4())
+            task.logs.append(f"Creating droplet ({slug}) in sfo3...")
             droplet_info = await create_worker_droplet(slug, worker_id)
             droplet_id = droplet_info["droplet_id"]
 
+            task.logs.append(f"Droplet {droplet_id} created. Waiting for boot...")
             active_info = await wait_for_active(droplet_id)
+            task.logs.append(f"Droplet active at {active_info.get('ip', '?')}. Installing runtimes...")
 
             warm_pool.add_worker(
                 worker_id=worker_id,
@@ -342,6 +352,7 @@ async def _run_audit(task: Task, req: AuditRequest) -> None:
                 "description": f"CodeScope audit: {req.repo_url}",
                 "upload_urls": upload_urls,
             })
+            task.logs.append("Task queued. Worker daemon starting CodeScope...")
             warm_pool.mark_busy(worker_id, task_id)
 
             task.droplet.id = droplet_id
