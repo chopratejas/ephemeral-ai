@@ -1458,66 +1458,59 @@ def layer_6_repo_health(repo_path: Path, language: str) -> dict:
 # Layer 7: AI Synthesis (Gradient AI) - UPDATED PROMPT
 # ---------------------------------------------------------------------------
 
-AI_SYNTHESIS_SYSTEM_PROMPT = """\
-You are a senior application security engineer specializing in AI-generated code security.
-You are reviewing findings from a 7-layer security audit. This audit specifically targets
-vulnerabilities common in code written by AI assistants (Claude, Cursor, Copilot).
+# --- Multi-Model Analysis Prompts ---
 
-Your analysis MUST include:
+ANALYST_PROMPT = """\
+You are a CISO reviewing a security audit. Prioritize findings by BUSINESS RISK.
 
-1. EXECUTIVE SUMMARY (3-4 sentences for non-technical stakeholders)
+Your output MUST include:
+1. EXECUTIVE SUMMARY (3-4 sentences for board/non-technical stakeholders)
 2. RISK SCORE (0-100, where 0=perfect, 100=critical risk)
-3. AI CODE SAFETY SECTION - specifically call out:
-   - Prompt injection vulnerabilities
-   - Hallucinated/suspicious dependencies
-   - Missing input validation (the #1 AI code flaw)
-   - AI-specific anti-patterns found
-4. FINDINGS BY SEVERITY (Critical/High/Medium/Low/Info)
-   For each Critical/High finding:
-   - Plain English explanation
-   - Why AI generates this pattern
-   - Specific remediation steps
-   - Code example of the fix
-5. CROSS-LAYER INSIGHTS
-   - A dependency CVE in untested code = escalate to Critical
-   - A secret in a file without .gitignore protection = Critical
-   - Prompt injection + no output validation = Critical chain
-6. SUPPLY CHAIN ASSESSMENT
-   - Any hallucinated packages?
-   - License risks?
-   - Outdated dependencies?
+3. TOP 5 RISKS ranked by exploitability and business impact
+4. AI CODE SAFETY assessment (prompt injection, hallucinated deps, missing validation)
+5. SUPPLY CHAIN ASSESSMENT (dependency risks, license issues)
 
-Output your analysis as a structured markdown report.
+Be concise. Focus on what matters most to the business.
+Output as markdown.
+"""
+
+REVIEWER_PROMPT = """\
+You are a senior developer reviewing security findings. For each Critical and High \
+severity finding, provide a SPECIFIC CODE FIX.
+
+Your output MUST include for each Critical/High finding:
+1. The finding title and file location
+2. WHY this is dangerous (one sentence)
+3. A concrete code example showing the BEFORE (vulnerable) and AFTER (fixed) code
+4. What AI coding pattern caused this (why Claude/Copilot generates this mistake)
+
+Output as markdown with code blocks.
+"""
+
+VERIFIER_PROMPT = """\
+You are a security researcher verifying audit findings. Your job is to REDUCE FALSE POSITIVES.
+
+For each finding, assess:
+1. Is this a TRUE POSITIVE or FALSE POSITIVE? (and why)
+2. What is the realistic EXPLOIT SCENARIO? Can an attacker actually reach this code path?
+3. SEVERITY ADJUSTMENT: Should the severity be upgraded or downgraded based on context?
+
+Also identify CROSS-LAYER CHAINS:
+- A dependency CVE in untested code = escalate to Critical
+- A secret near code with no .gitignore = escalate to Critical
+- Prompt injection + no output validation = Critical attack chain
+
+Output as markdown. Be skeptical - flag likely false positives clearly.
 """
 
 
-def layer_7_ai_synthesis(findings: dict, gradient_key: str, model: str) -> str:
-    """Layer 7: AI-powered synthesis and prioritization of all findings."""
-    log("[Layer 7/7] Running AI synthesis via Gradient AI...")
-
-    if not gradient_key:
-        log("  WARNING: No Gradient API key provided. Generating basic report without AI.")
-        return _generate_fallback_report(findings)
-
-    # Prepare the findings summary for the AI
-    findings_json = json.dumps(findings, indent=2, default=str)
-
-    # Truncate if too large (reserve room for system prompt + response)
-    max_findings_chars = 14000
-    if len(findings_json) > max_findings_chars:
-        findings_json = findings_json[:max_findings_chars] + "\n... (truncated)"
-
-    user_message = (
-        "Here are the findings from all 7 automated analysis layers for a code repository audit. "
-        "This audit specifically targets AI-generated code patterns. "
-        "Please analyze, cross-reference, and produce your comprehensive security report.\n\n"
-        f"```json\n{findings_json}\n```"
-    )
-
+def _call_gradient(gradient_key: str, model: str, system_prompt: str,
+                   user_message: str, label: str) -> str:
+    """Call a single Gradient model and return its response."""
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": AI_SYNTHESIS_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         "temperature": 0.2,
@@ -1536,38 +1529,183 @@ def layer_7_ai_synthesis(findings: dict, gradient_key: str, model: str) -> str:
         )
         resp = urllib.request.urlopen(req, timeout=TIMEOUT_AI)
         result = json.loads(resp.read().decode())
-        ai_report = result["choices"][0]["message"]["content"]
-        log("  AI synthesis complete.")
-        return _build_full_report(findings, ai_report)
-
+        content = result["choices"][0]["message"]["content"]
+        log(f"  {label} complete ({model})")
+        return content
     except urllib.error.HTTPError as e:
         body = ""
         try:
-            body = e.read().decode()[:500]
+            body = e.read().decode()[:300]
         except Exception:
             pass
-        log(f"  Gradient AI HTTP error {e.code}: {body}")
-        return _generate_fallback_report(findings)
+        log(f"  {label} HTTP error {e.code}: {body}")
+        return ""
     except Exception as e:
-        log(f"  Gradient AI error: {e}")
+        log(f"  {label} error: {e}")
+        return ""
+
+
+def layer_7_ai_synthesis(findings: dict, gradient_key: str, model: str) -> str:
+    """Layer 7: Multi-model AI analysis using 3 different LLMs.
+
+    Model 1 (Security Analyst): Prioritizes by business risk, executive summary
+    Model 2 (Code Reviewer): Provides specific code fixes for critical findings
+    Model 3 (Verifier): Validates findings, flags false positives, finds attack chains
+    """
+    log("[Layer 7/7] Running MULTI-MODEL AI synthesis (3 models)...")
+
+    if not gradient_key:
+        log("  WARNING: No Gradient API key. Generating basic report.")
         return _generate_fallback_report(findings)
 
+    # Prepare findings for all models
+    findings_json = json.dumps(findings, indent=2, default=str)
+    max_chars = 12000
+    if len(findings_json) > max_chars:
+        findings_json = findings_json[:max_chars] + "\n... (truncated)"
 
-def _build_full_report(findings: dict, ai_report: str) -> str:
-    """Combine raw findings with AI analysis into a final markdown report."""
+    user_message = (
+        "Security audit findings from a 7-layer scan of a code repository "
+        "(specifically targeting AI-generated code patterns):\n\n"
+        f"```json\n{findings_json}\n```"
+    )
+
+    # --- Model 1: Security Analyst (openai-gpt-oss-120b) ---
+    log("  [1/3] Security Analyst (openai-gpt-oss-120b)...")
+    analyst_report = _call_gradient(
+        gradient_key, "openai-gpt-oss-120b",
+        ANALYST_PROMPT, user_message, "Analyst"
+    )
+
+    # --- Model 2: Code Reviewer (llama3.3-70b-instruct) ---
+    log("  [2/3] Code Reviewer (llama3.3-70b-instruct)...")
+    reviewer_report = _call_gradient(
+        gradient_key, "llama3.3-70b-instruct",
+        REVIEWER_PROMPT, user_message, "Reviewer"
+    )
+
+    # --- Model 3: Verifier (deepseek-r1-distill-llama-70b) ---
+    log("  [3/3] Verifier (deepseek-r1-distill-llama-70b)...")
+    verifier_report = _call_gradient(
+        gradient_key, "deepseek-r1-distill-llama-70b",
+        VERIFIER_PROMPT, user_message, "Verifier"
+    )
+
+    # Combine all three analyses
+    combined = _build_multi_model_report(findings, analyst_report, reviewer_report, verifier_report)
+
+    models_used = sum(1 for r in [analyst_report, reviewer_report, verifier_report] if r)
+    log(f"  Multi-model synthesis complete ({models_used}/3 models responded)")
+
+    return combined
+
+
+def _build_multi_model_report(findings: dict, analyst: str, reviewer: str, verifier: str) -> str:
+    """Build the final report from 3 independent model analyses."""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
     sections = [
-        f"# CodeScope: AI-Era Security Audit Report",
-        f"",
+        "# CodeScope: AI-Era Security Audit Report",
+        "",
         f"**Generated:** {timestamp}",
-        f"**Engine:** CodeScope 7-Layer AI Security Audit",
-        f"",
-        f"---",
-        f"",
+        "**Engine:** CodeScope Multi-Model Analysis (3 LLMs)",
+        "**Models:** openai-gpt-oss-120b, llama3.3-70b-instruct, deepseek-r1-distill-llama-70b",
+        "",
+        "---",
+        "",
     ]
 
-    # AI Analysis (the main event)
+    if analyst:
+        sections.append("## Security Analysis")
+        sections.append("*Model: openai-gpt-oss-120b (Security Analyst)*")
+        sections.append("")
+        sections.append(analyst)
+        sections.append("")
+        sections.append("---")
+        sections.append("")
+
+    if reviewer:
+        sections.append("## Code Remediation")
+        sections.append("*Model: llama3.3-70b-instruct (Code Reviewer)*")
+        sections.append("")
+        sections.append(reviewer)
+        sections.append("")
+        sections.append("---")
+        sections.append("")
+
+    if verifier:
+        sections.append("## Verification and False Positive Analysis")
+        sections.append("*Model: deepseek-r1-distill-llama-70b (Verifier)*")
+        sections.append("")
+        sections.append(verifier)
+        sections.append("")
+        sections.append("---")
+        sections.append("")
+
+    if not analyst and not reviewer and not verifier:
+        sections.append("## Analysis")
+        sections.append("")
+        sections.append("All models failed to respond. See raw findings below.")
+        sections.append("")
+
+    # Append raw findings
+    sections.append(_build_raw_findings_section(findings))
+
+    return "\n".join(sections)
+
+
+def _build_raw_findings_section(findings: dict) -> str:
+    """Build the raw findings summary section."""
+    lines = ["## Raw Layer Findings Summary", ""]
+    # Reuse existing logic from _build_full_report
+    sast = findings.get("sast", [])
+    if sast:
+        by_sev = {}
+        by_cat = {}
+        for f in sast:
+            sev = f.get("severity", "unknown")
+            by_sev[sev] = by_sev.get(sev, 0) + 1
+            cat = f.get("category", "unknown")
+            by_cat[cat] = by_cat.get(cat, 0) + 1
+        sev_str = ", ".join(f"{k}: {v}" for k, v in sorted(by_sev.items()))
+        cat_str = ", ".join(f"{k}: {v}" for k, v in sorted(by_cat.items()))
+        lines.append(f"### Layer 1: SAST ({len(sast)} findings)")
+        lines.append(f"**By severity:** {sev_str}")
+        lines.append(f"**By category:** {cat_str}")
+        lines.append("")
+        for f in sast:
+            if f.get("severity") in ("critical", "high"):
+                lines.append(f"- [{f['severity'].upper()}] `{f.get('file','')}` L{f.get('line','')}: {f.get('rule','')} - {f.get('message','')}")
+        lines.append("")
+    sca = findings.get("sca", [])
+    if sca:
+        lines.append(f"### Layer 2: SCA ({len(sca)} findings)")
+        for f in sca:
+            lines.append(f"- [{f.get('severity','?').upper()}] {f.get('package','')}: {f.get('vulnerability','')[:100]}")
+        lines.append("")
+    secrets = findings.get("secrets", [])
+    if secrets:
+        lines.append(f"### Layer 3: Secrets ({len(secrets)} findings)")
+        for f in secrets:
+            lines.append(f"- **{f.get('type','')}** in `{f.get('file','')}` line {f.get('line','')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _build_full_report(findings: dict, ai_report: str) -> str:
+    """Combine raw findings with single AI analysis (legacy fallback)."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+
+    sections = [
+        "# CodeScope: AI-Era Security Audit Report",
+        "",
+        f"**Generated:** {timestamp}",
+        "**Engine:** CodeScope 7-Layer AI Security Audit",
+        "",
+        "---",
+        "",
+    ]
+
     sections.append("## AI Security Analysis")
     sections.append("")
     sections.append(ai_report)
