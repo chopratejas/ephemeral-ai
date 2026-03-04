@@ -52,12 +52,14 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
         {/* Hero text */}
         <div className="mb-10">
           <h1 className="text-3xl sm:text-5xl font-bold text-text-primary tracking-tight mb-3">
-            Security Auditing
-          </h1>
-          <p className="text-lg text-text-secondary leading-relaxed max-w-lg">
-            7-layer security analysis on ephemeral infrastructure.
+            Find vulnerabilities
             <br />
-            Code cloned, scanned, destroyed. Nothing persists.
+            <span className="text-accent-purple">before they find you.</span>
+          </h1>
+          <p className="text-lg text-text-secondary leading-relaxed max-w-xl">
+            Paste any GitHub repo. 7 security layers. 3 AI models.
+            48+ vulnerability patterns including AI-generated code flaws.
+            Your code is destroyed after every scan.
           </p>
         </div>
 

@@ -741,26 +741,44 @@ def execute_audit(task: dict) -> None:
         ]
 
         log("Starting CodeScope audit...")
-        result = subprocess.run(
+
+        # Stream stdout line-by-line so we can forward progress to the orchestrator
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=480,  # 8 min max for audits
             cwd="/opt/audit",
         )
 
-        log(f"CodeScope stdout:\n{result.stdout[-2000:]}")
-        if result.stderr:
-            log(f"CodeScope stderr:\n{result.stderr[-1000:]}")
+        for line in iter(proc.stdout.readline, ''):
+            line = line.rstrip()
+            if not line:
+                continue
+            log(line)
 
-        if result.returncode == 0:
+            # Forward layer progress as callbacks so the dashboard can show it
+            if "[Layer " in line and "/7]" in line:
+                post_task_status(task_id, "running", "scanning",
+                                 {"log_line": line})
+            elif "Audit Complete" in line:
+                post_task_status(task_id, "running", "finalizing",
+                                 {"log_line": line})
+            elif "findings" in line.lower() or "complete" in line.lower():
+                post_task_status(task_id, "running", "scanning",
+                                 {"log_line": line})
+
+        proc.wait(timeout=480)
+        exit_code = proc.returncode
+
+        if exit_code == 0:
             log("CodeScope audit completed successfully!")
             task["_final_status"] = "completed"
             task["_final_exit_code"] = 0
         else:
-            log(f"CodeScope audit finished with exit code {result.returncode}")
-            task["_final_status"] = "completed"  # Still upload results even if some layers failed
-            task["_final_exit_code"] = result.returncode
+            log(f"CodeScope audit finished with exit code {exit_code}")
+            task["_final_status"] = "completed"
+            task["_final_exit_code"] = exit_code
 
         task["_attempts"] = 1
         task["_language"] = "codescope"

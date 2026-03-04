@@ -14,6 +14,7 @@ export default function App() {
     layers,
     result,
     elapsed,
+    logs,
     stats,
     history,
     submitAudit,
@@ -39,7 +40,7 @@ export default function App() {
         )}
 
         {view === 'scanning' && (
-          <LiveAudit repoUrl={repoUrl} layers={layers} elapsed={elapsed} />
+          <LiveAudit repoUrl={repoUrl} layers={layers} elapsed={elapsed} logs={logs} />
         )}
 
         {view === 'report' && result && (
@@ -47,9 +48,8 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-border py-6 mt-8">
-        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-2xs font-mono text-text-muted">
+        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between text-xs font-mono text-text-muted">
           <span>CodeScope / Ephemeral.ai</span>
           <span>Infrastructure destroyed after every scan</span>
         </div>

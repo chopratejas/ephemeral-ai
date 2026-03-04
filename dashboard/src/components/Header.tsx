@@ -52,16 +52,16 @@ export default function Header({ stats, onLogoClick }: HeaderProps) {
 
         <div className="flex items-center gap-6 text-xs font-mono text-text-secondary">
           <div className="hidden md:flex items-center gap-1.5">
-            <span className="text-text-muted">audits</span>
-            <span className="text-text-primary">{(stats?.total_tasks ?? 0).toLocaleString()}</span>
+            <span className="text-text-muted">scanned</span>
+            <span className="text-text-primary">{(stats?.total_tasks ?? 0)}</span>
           </div>
           <div className="hidden md:flex items-center gap-1.5">
-            <span className="text-text-muted">saved</span>
-            <span className="text-accent-green">${(stats?.total_savings_usd ?? 0).toFixed(2)}</span>
+            <span className="text-text-muted">patterns</span>
+            <span className="text-text-primary">48+</span>
           </div>
           <div className="hidden sm:flex items-center gap-1.5">
-            <span className="text-text-muted">cost</span>
-            <span className="text-accent-green">${(stats?.total_cost_usd ?? 0).toFixed(3)}</span>
+            <span className="text-text-muted">models</span>
+            <span className="text-accent-purple">3</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-accent-green" />

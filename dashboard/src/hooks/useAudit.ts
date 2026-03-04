@@ -6,7 +6,7 @@ import type {
   AuditHistoryEntry,
   PlatformStats,
 } from '../types';
-import { startAudit, connectWebSocket, getTaskStatus, getStats } from '../api';
+import { startAudit, getTaskStatus, getStats } from '../api';
 
 export type AppView = 'home' | 'scanning' | 'report';
 
@@ -329,6 +329,7 @@ export function useAudit() {
   const [layers, setLayers] = useState<ScanLayer[]>(DEFAULT_LAYERS);
   const [result, setResult] = useState<AuditResult | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [logs, setLogs] = useState<string[]>([]);
   const [stats, setStats] = useState<PlatformStats>({
     total_tasks: 0,
     total_cost_usd: 0,
@@ -473,61 +474,103 @@ export function useAudit() {
           setElapsed((Date.now() - startTime) / 1000);
         }, 100);
 
-        // Connect WebSocket
-        wsRef.current = connectWebSocket(
-          taskId,
-          (event) => {
-            if (event.event === 'phase_update') {
-              const d = event.data as { phase_index?: number; status?: string; findings?: number; duration?: number };
-              if (d.phase_index !== undefined) {
-                setLayers((prev) =>
-                  prev.map((l, i) => {
-                    if (i === d.phase_index) {
-                      return {
-                        ...l,
-                        status: (d.status as ScanLayer['status']) || l.status,
-                        findings: d.findings ?? l.findings,
-                        duration: d.duration ?? l.duration,
+        // Phase progress mapping: show which layers are likely active based on elapsed time
+        const phaseTimings = [
+          { after: 0, layer: -1 },     // provisioning
+          { after: 35, layer: 0 },     // SAST starts after boot
+          { after: 40, layer: 1 },     // Dependencies
+          { after: 45, layer: 2 },     // Secrets
+          { after: 48, layer: 3 },     // Licenses
+          { after: 51, layer: 4 },     // Tests
+          { after: 54, layer: 5 },     // Repo Health
+          { after: 57, layer: 6 },     // AI Synthesis (takes longest)
+        ];
+
+        // Estimated progress updater based on elapsed time
+        const progressTimer = setInterval(() => {
+          const elapsed = (Date.now() - startTime) / 1000;
+          setLayers((prev) => {
+            const updated = prev.map((l) => ({ ...l }));
+            for (const pt of phaseTimings) {
+              if (elapsed > pt.after && pt.layer >= 0 && pt.layer < 7) {
+                if (updated[pt.layer].status === 'pending') {
+                  updated[pt.layer] = { ...updated[pt.layer], status: 'running' };
+                }
+                // Mark previous layers as done
+                for (let i = 0; i < pt.layer; i++) {
+                  if (updated[i].status === 'running' || updated[i].status === 'pending') {
+                    updated[i] = { ...updated[i], status: 'done', duration: (pt.after - phaseTimings[i+1]?.after || 3) };
+                  }
+                }
+              }
+            }
+            return updated;
+          });
+        }, 2000);
+        simulationRef.current.push(progressTimer as unknown as ReturnType<typeof setTimeout>);
+
+        // Poll for status + logs every 3 seconds
+        const poll = setInterval(async () => {
+          try {
+            const raw = await fetch(`${import.meta.env.VITE_API_URL || 'https://ephemeral-ai-dgdbw.ondigitalocean.app'}/api/v1/tasks/${taskId}`);
+            const data = await raw.json();
+
+            // Update logs from backend (the daemon forwards CodeScope output)
+            if (data.logs && data.logs.length > 0) {
+              setLogs(data.logs);
+
+              // Parse layer status from actual log lines
+              setLayers((prev) => {
+                const updated = prev.map((l) => ({ ...l }));
+                const layerDoneRe = /\[Layer (\d)\/7\].*?complete/i;
+                const layerStartRe = /\[Layer (\d)\/7\]/i;
+
+                for (const line of data.logs) {
+                  const doneMatch = line.match(layerDoneRe);
+                  if (doneMatch) {
+                    const idx = parseInt(doneMatch[1]) - 1;
+                    if (idx >= 0 && idx < 7) {
+                      const findingsMatch = line.match(/(\d+)\s+findings?/i);
+                      updated[idx] = {
+                        ...updated[idx],
+                        status: 'done',
+                        findings: findingsMatch ? parseInt(findingsMatch[1]) : 0,
                       };
                     }
-                    return l;
-                  })
-                );
-              }
-            } else if (event.event === 'completed' || event.event === 'task_completed') {
-              if (timerRef.current) clearInterval(timerRef.current);
-              getTaskStatus(taskId).then((r) => {
-                setResult(r);
-                setView('report');
+                  }
+                  const startMatch = line.match(layerStartRe);
+                  if (startMatch && !doneMatch) {
+                    const idx = parseInt(startMatch[1]) - 1;
+                    if (idx >= 0 && idx < 7 && updated[idx].status === 'pending') {
+                      updated[idx] = { ...updated[idx], status: 'running' };
+                    }
+                  }
+                }
+                return updated;
               });
-            } else if (event.event === 'error' || event.event === 'failed') {
+            }
+
+            if (data.status === 'completed') {
+              clearInterval(poll);
+              clearInterval(progressTimer);
               if (timerRef.current) clearInterval(timerRef.current);
-              setError((event.data as { message?: string }).message || 'Audit failed');
+              setLayers((prev) => prev.map((l) => ({ ...l, status: 'done' as const })));
+              setLogs((prev) => [...prev, '--- Audit complete. Loading report... ---']);
+              await new Promise((r) => setTimeout(r, 800));
+              const result = await getTaskStatus(taskId);
+              setResult(result);
+              setView('report');
+            } else if (data.status === 'failed') {
+              clearInterval(poll);
+              clearInterval(progressTimer);
+              if (timerRef.current) clearInterval(timerRef.current);
+              setError(data.error || 'Audit failed');
               setView('home');
             }
-          },
-          () => {
-            // WebSocket error - fall back to polling
-            const poll = setInterval(async () => {
-              try {
-                const status = await getTaskStatus(taskId);
-                if (status.status === 'completed') {
-                  clearInterval(poll);
-                  if (timerRef.current) clearInterval(timerRef.current);
-                  setResult(status);
-                  setView('report');
-                } else if (status.status === 'failed' || status.status === 'error') {
-                  clearInterval(poll);
-                  if (timerRef.current) clearInterval(timerRef.current);
-                  setError('Audit failed');
-                  setView('home');
-                }
-              } catch {
-                // Continue polling
-              }
-            }, 5000);
+          } catch {
+            // Continue polling
           }
-        );
+        }, 3000);
       } catch {
         // API unavailable - simulate
         simulateScan(url);
@@ -545,6 +588,7 @@ export function useAudit() {
     setError(null);
     setLayers(DEFAULT_LAYERS.map((l) => ({ ...l })));
     setElapsed(0);
+    setLogs([]);
   }, [cleanup]);
 
   const viewReport = useCallback((entry: AuditHistoryEntry) => {
@@ -565,6 +609,7 @@ export function useAudit() {
     layers,
     result,
     elapsed,
+    logs,
     stats,
     history,
     submitAudit,
