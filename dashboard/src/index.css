@@ -13,6 +13,7 @@ body {
   background: #0a0a0f;
   color: #e4e4e7;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.6;

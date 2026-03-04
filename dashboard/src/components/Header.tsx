@@ -36,7 +36,7 @@ function ShieldIcon() {
 export default function Header({ stats, onLogoClick }: HeaderProps) {
   return (
     <header className="border-b border-border bg-surface/50 backdrop-blur-sm sticky top-0 z-50">
-      <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
         <button
           onClick={onLogoClick}
           className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"

@@ -23,7 +23,7 @@ export default {
         'accent-purple': '#8b5cf6',
       },
       fontSize: {
-        '2xs': ['0.625rem', { lineHeight: '0.875rem' }],
+        '2xs': ['0.75rem', { lineHeight: '1rem' }],  // 12px, same as xs
       },
     },
   },

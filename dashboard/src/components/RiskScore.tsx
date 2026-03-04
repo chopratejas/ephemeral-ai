@@ -16,7 +16,7 @@ export default function RiskScore({ score }: RiskScoreProps) {
   return (
     <div className="flex items-center gap-4">
       <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-bold font-mono text-text-primary">{score}</span>
+        <span className="text-5xl font-bold font-mono text-text-primary">{score}</span>
         <span className="text-sm font-mono text-text-muted">/100</span>
       </div>
 

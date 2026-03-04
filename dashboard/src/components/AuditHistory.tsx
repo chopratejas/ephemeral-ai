@@ -35,16 +35,16 @@ export default function AuditHistory({ history, onSelect }: AuditHistoryProps) {
   if (history.length === 0) return null;
 
   return (
-    <div className="max-w-2xl mx-auto px-6 pb-20">
+    <div className="max-w-5xl mx-auto px-6 pb-20">
       <div className="border border-border rounded-lg bg-surface overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <span className="text-2xs font-semibold text-text-secondary uppercase tracking-wider">
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
             Recent Audits
           </span>
         </div>
 
         {/* Table header */}
-        <div className="hidden sm:grid grid-cols-[1fr_60px_80px_70px_60px_70px] gap-2 px-4 py-2 border-b border-border text-2xs font-mono text-text-muted uppercase tracking-wider">
+        <div className="hidden sm:grid grid-cols-[1fr_60px_80px_70px_60px_70px] gap-2 px-4 py-2 border-b border-border text-xs font-mono text-text-muted uppercase tracking-wider">
           <span>Repository</span>
           <span className="text-right">Risk</span>
           <span className="text-right">Findings</span>
@@ -91,7 +91,7 @@ export default function AuditHistory({ history, onSelect }: AuditHistoryProps) {
                   {entry.risk_score}
                 </span>
               </div>
-              <div className="flex items-center gap-3 text-2xs font-mono text-text-muted">
+              <div className="flex items-center gap-3 text-xs font-mono text-text-muted">
                 <span>{entry.total_findings} findings</span>
                 <span>{entry.duration_seconds.toFixed(1)}s</span>
                 <span className="text-accent-green">${entry.cost_usd.toFixed(3)}</span>

@@ -48,13 +48,13 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
 
   return (
     <div className="animate-fade-in">
-      <div className="max-w-2xl mx-auto px-6 pt-24 pb-16">
+      <div className="max-w-5xl mx-auto px-6 pt-24 pb-16">
         {/* Hero text */}
         <div className="mb-10">
-          <h1 className="text-3xl sm:text-4xl font-bold text-text-primary tracking-tight mb-3">
+          <h1 className="text-3xl sm:text-5xl font-bold text-text-primary tracking-tight mb-3">
             Security Auditing
           </h1>
-          <p className="text-base text-text-secondary leading-relaxed max-w-lg">
+          <p className="text-lg text-text-secondary leading-relaxed max-w-lg">
             7-layer security analysis on ephemeral infrastructure.
             <br />
             Code cloned, scanned, destroyed. Nothing persists.
@@ -98,7 +98,7 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
           {SCAN_CAPABILITIES.map((cap) => (
             <span
               key={cap}
-              className="px-2.5 py-1 bg-surface border border-border rounded text-2xs font-mono text-text-secondary"
+              className="px-2.5 py-1 bg-surface border border-border rounded text-xs font-mono text-text-secondary"
             >
               {cap}
             </span>
@@ -106,7 +106,7 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
         </div>
 
         {/* Cost line */}
-        <p className="text-xs text-text-muted mb-8 font-mono">
+        <p className="text-sm text-text-muted mb-8 font-mono">
           $0.01 per audit &middot; Code destroyed after scan &middot; No data retained
         </p>
 
@@ -115,7 +115,7 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
       </div>
 
       {/* Architecture diagram */}
-      <div className="max-w-2xl mx-auto px-6 pb-20">
+      <div className="max-w-5xl mx-auto px-6 pb-20">
         <div className="border border-border rounded-lg p-6 bg-surface/50">
           <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-4">
             How it works
@@ -129,10 +129,10 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
             ].map((item, i) => (
               <div key={item.step} className="flex sm:flex-col items-center sm:items-center gap-3 sm:gap-2">
                 <div className="flex items-center gap-3 sm:flex-col sm:gap-2">
-                  <span className="text-2xs font-mono text-accent-purple">{item.step}</span>
+                  <span className="text-xs font-mono text-accent-purple">{item.step}</span>
                   <span className="text-sm font-medium text-text-primary">{item.label}</span>
                 </div>
-                <span className="text-2xs text-text-muted leading-tight hidden sm:block">{item.desc}</span>
+                <span className="text-sm text-text-muted leading-tight hidden sm:block">{item.desc}</span>
                 {i < 3 && (
                   <span className="text-text-muted text-xs hidden sm:block absolute-none">
                     {/* Arrow rendered via layout */}

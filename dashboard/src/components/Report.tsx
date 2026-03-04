@@ -102,12 +102,12 @@ export default function Report({ result, onNewAudit }: ReportProps) {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-6 pt-12 pb-20 animate-fade-in">
+    <div className="max-w-5xl mx-auto px-6 pt-12 pb-20 animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <h2 className="text-lg font-semibold text-text-primary">Report</h2>
+            <h2 className="text-2xl font-semibold text-text-primary">Report</h2>
             <span className="font-mono text-accent-purple text-sm">{result.repo_name}</span>
           </div>
           <div className="flex items-center gap-3 text-xs font-mono text-text-secondary">
@@ -122,7 +122,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
         </div>
         <button
           onClick={onNewAudit}
-          className="text-xs text-text-secondary hover:text-text-primary transition-colors font-mono px-3 py-1.5 border border-border rounded-lg hover:border-text-muted"
+          className="text-sm text-text-secondary hover:text-text-primary transition-colors font-mono px-3 py-1.5 border border-border rounded-lg hover:border-text-muted"
         >
           New Audit
         </button>
@@ -130,7 +130,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
 
       {/* Risk Score */}
       <div className="border border-border rounded-lg bg-surface p-5 mb-6">
-        <div className="text-2xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
+        <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
           Risk Score
         </div>
         <RiskScore score={result.risk_score} />
@@ -153,7 +153,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
 
       {/* AI Summary */}
       <div className="border border-border rounded-lg bg-surface p-5 mb-6">
-        <div className="text-2xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+        <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
           AI Analysis Summary
         </div>
         <p className="text-sm text-text-secondary leading-relaxed">{result.summary}</p>
@@ -163,7 +163,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       <div className="flex flex-wrap gap-2 mb-4">
         <button
           onClick={() => setActiveCategory(null)}
-          className={`px-2.5 py-1 text-2xs font-mono rounded border transition-colors ${
+          className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
             activeCategory === null
               ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
               : 'bg-surface border-border text-text-secondary hover:border-text-muted'
@@ -177,7 +177,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
             <button
               key={cat}
               onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
-              className={`px-2.5 py-1 text-2xs font-mono rounded border transition-colors ${
+              className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
                 activeCategory === cat
                   ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
                   : 'bg-surface border-border text-text-secondary hover:border-text-muted'
@@ -204,7 +204,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       {/* Scan Layers Summary */}
       <div className="border border-border rounded-lg bg-surface overflow-hidden mb-8">
         <div className="px-4 py-3 border-b border-border">
-          <span className="text-2xs font-semibold text-text-secondary uppercase tracking-wider">
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
             Scan Layers
           </span>
         </div>
@@ -216,7 +216,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
             }`}
           >
             <span className="text-accent-green text-xs">&#9679;</span>
-            <span className="text-2xs font-mono text-text-muted w-4">{layer.id}</span>
+            <span className="text-xs font-mono text-text-muted w-4">{layer.id}</span>
             <span className="flex-1 text-text-primary text-sm">{layer.name}</span>
             <span className="text-xs font-mono text-text-secondary">
               {layer.findings} findings

@@ -32,7 +32,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed }: LiveAuditProps) 
   const isRunning = layers.some((l) => l.status === 'running');
 
   return (
-    <div className="max-w-2xl mx-auto px-6 pt-16 pb-20 animate-fade-in">
+    <div className="max-w-5xl mx-auto px-6 pt-16 pb-20 animate-fade-in">
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-2 mb-1">
@@ -75,7 +75,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed }: LiveAuditProps) 
           >
             <StatusIcon status={layer.status} />
 
-            <span className="text-2xs font-mono text-text-muted w-6 shrink-0">
+            <span className="text-xs font-mono text-text-muted w-6 shrink-0">
               {layer.id}
             </span>
 

@@ -39,7 +39,7 @@ export default function FindingCard({ finding }: FindingCardProps) {
         <div className="flex-1 min-w-0">
           <span className="text-sm text-text-primary">{finding.title}</span>
           {finding.file && (
-            <span className="ml-2 text-2xs font-mono text-text-muted">
+            <span className="ml-2 text-xs font-mono text-text-muted">
               {finding.file}
               {finding.line > 0 && `:${finding.line}`}
             </span>
@@ -48,12 +48,12 @@ export default function FindingCard({ finding }: FindingCardProps) {
 
         <div className="flex items-center gap-2 shrink-0">
           {finding.owasp && (
-            <span className="text-2xs font-mono text-accent-orange px-1.5 py-0.5 bg-accent-orange/10 border border-accent-orange/20 rounded">
+            <span className="text-xs font-mono text-accent-orange px-1.5 py-0.5 bg-accent-orange/10 border border-accent-orange/20 rounded">
               {finding.owasp}
             </span>
           )}
           {finding.cwe && (
-            <span className="text-2xs font-mono text-text-muted px-1.5 py-0.5 bg-surface border border-border rounded">
+            <span className="text-xs font-mono text-text-muted px-1.5 py-0.5 bg-surface border border-border rounded">
               {finding.cwe}
             </span>
           )}
@@ -70,7 +70,7 @@ export default function FindingCard({ finding }: FindingCardProps) {
             <div className="flex items-start gap-2 px-3 py-2.5 bg-accent-green/5 border border-accent-green/10 rounded">
               <span className="text-accent-green text-xs mt-0.5 shrink-0">&rsaquo;</span>
               <div>
-                <span className="text-2xs font-semibold text-accent-green uppercase tracking-wider">
+                <span className="text-xs font-semibold text-accent-green uppercase tracking-wider">
                   Suggested Fix
                 </span>
                 <p className="text-sm text-text-secondary mt-1 leading-relaxed">
@@ -80,7 +80,7 @@ export default function FindingCard({ finding }: FindingCardProps) {
             </div>
 
             {(finding.owasp || finding.cwe) && (
-              <div className="flex items-center gap-3 text-2xs font-mono text-text-muted pt-1">
+              <div className="flex items-center gap-3 text-xs font-mono text-text-muted pt-1">
                 {finding.owasp && <span>OWASP {finding.owasp}</span>}
                 {finding.cwe && <span>{finding.cwe}</span>}
               </div>
