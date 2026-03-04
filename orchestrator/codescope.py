@@ -444,84 +444,92 @@ def layer_1_sast(repo_path: Path, language: str) -> list:
 # ---------------------------------------------------------------------------
 
 def _check_package_exists_pypi(pkg_name: str) -> bool:
-    """Check if a Python package exists on PyPI / is installed."""
-    rc, stdout, stderr = _run(
-        [sys.executable, "-m", "pip", "index", "versions", pkg_name],
-        timeout=TIMEOUT_PKG_CHECK, cwd="/tmp",
-    )
-    if rc == 0 and stdout.strip():
-        return True
-    # Fallback: pip show
-    rc2, stdout2, stderr2 = _run(
-        [sys.executable, "-m", "pip", "show", pkg_name],
-        timeout=TIMEOUT_PKG_CHECK, cwd="/tmp",
-    )
-    return rc2 == 0 and "Name:" in stdout2
+    """Check if a Python package exists on PyPI via HTTP registry lookup."""
+    try:
+        url = f"https://pypi.org/pypi/{pkg_name}/json"
+        req = urllib.request.Request(url, method="HEAD")
+        resp = urllib.request.urlopen(req, timeout=5)
+        return resp.status == 200
+    except urllib.error.HTTPError as e:
+        return e.code != 404  # 404 = definitely not found; other errors = assume exists
+    except Exception:
+        return True  # Network error = assume exists (don't false-positive)
 
 
 def _check_package_exists_npm(pkg_name: str) -> bool:
-    """Check if an npm package exists in the registry."""
-    rc, stdout, stderr = _run(
-        ["npm", "view", pkg_name, "version"],
-        timeout=TIMEOUT_PKG_CHECK, cwd="/tmp",
-    )
-    return rc == 0 and stdout.strip() != ""
+    """Check if an npm package exists via the npm registry HTTP API."""
+    try:
+        # Scoped packages need URL encoding
+        encoded = pkg_name.replace("/", "%2f")
+        url = f"https://registry.npmjs.org/{encoded}"
+        req = urllib.request.Request(url, method="HEAD")
+        resp = urllib.request.urlopen(req, timeout=5)
+        return resp.status == 200
+    except urllib.error.HTTPError as e:
+        return e.code != 404
+    except Exception:
+        return True  # Network error = assume exists
 
 
-def _extract_python_imports(repo_path: Path) -> list:
-    """Extract all imported package names from Python files."""
-    imports = set()
-    stdlib_modules = {
-        "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio",
-        "asyncore", "atexit", "audioop", "base64", "bdb", "binascii",
-        "binhex", "bisect", "builtins", "bz2", "calendar", "cgi", "cgitb",
-        "chunk", "cmath", "cmd", "code", "codecs", "codeop", "collections",
-        "colorsys", "compileall", "concurrent", "configparser", "contextlib",
-        "contextvars", "copy", "copyreg", "cProfile", "crypt", "csv",
-        "ctypes", "curses", "dataclasses", "datetime", "dbm", "decimal",
-        "difflib", "dis", "distutils", "doctest", "email", "encodings",
-        "enum", "errno", "faulthandler", "fcntl", "filecmp", "fileinput",
-        "fnmatch", "fractions", "ftplib", "functools", "gc", "getopt",
-        "getpass", "gettext", "glob", "grp", "gzip", "hashlib", "heapq",
-        "hmac", "html", "http", "idlelib", "imaplib", "imghdr", "imp",
-        "importlib", "inspect", "io", "ipaddress", "itertools", "json",
-        "keyword", "lib2to3", "linecache", "locale", "logging", "lzma",
-        "mailbox", "mailcap", "marshal", "math", "mimetypes", "mmap",
-        "modulefinder", "multiprocessing", "netrc", "nis", "nntplib",
-        "numbers", "operator", "optparse", "os", "ossaudiodev",
-        "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
-        "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
-        "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
-        "pydoc", "queue", "quopri", "random", "re", "readline", "reprlib",
-        "resource", "rlcompleter", "runpy", "sched", "secrets", "select",
-        "selectors", "shelve", "shlex", "shutil", "signal", "site",
-        "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "sqlite3",
-        "ssl", "stat", "statistics", "string", "stringprep", "struct",
-        "subprocess", "sunau", "symtable", "sys", "sysconfig", "syslog",
-        "tabnanny", "tarfile", "telnetlib", "tempfile", "termios", "test",
-        "textwrap", "threading", "time", "timeit", "tkinter", "token",
-        "tokenize", "tomllib", "trace", "traceback", "tracemalloc",
-        "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
-        "unittest", "urllib", "uu", "uuid", "venv", "warnings", "wave",
-        "weakref", "webbrowser", "winreg", "winsound", "wsgiref",
-        "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport",
-        "zlib", "_thread",
-    }
+def _extract_python_deps(repo_path: Path) -> list:
+    """Extract DECLARED dependencies from Python manifest files.
 
-    import_re = re.compile(r'(?:^|\n)\s*(?:from\s+(\S+)\s+import|import\s+(\S+))')
+    Only checks packages that are explicitly declared as dependencies,
+    NOT every import statement. This avoids false positives from local modules.
+    """
+    deps = set()
 
-    for fpath in _iter_repo_files(repo_path):
-        if fpath.suffix != ".py":
-            continue
-        content = _read_file_safe(fpath)
-        for match in import_re.finditer(content):
-            pkg = match.group(1) or match.group(2)
-            if pkg:
-                top_level = pkg.split(".")[0]
-                if top_level not in stdlib_modules and not top_level.startswith("_"):
-                    imports.add(top_level)
+    # Parse requirements*.txt files
+    for name in ["requirements.txt", "requirements-dev.txt", "requirements-test.txt",
+                 "requirements/base.txt", "requirements/dev.txt"]:
+        rpath = repo_path / name
+        if rpath.exists():
+            content = _read_file_safe(rpath)
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
+                # Extract package name (before any version specifier)
+                pkg = re.split(r'[>=<!~\[\];]', line)[0].strip()
+                if pkg and not pkg.startswith("."):
+                    deps.add(pkg.lower())
 
-    return sorted(imports)
+    # Parse pyproject.toml (basic extraction)
+    pyproject = repo_path / "pyproject.toml"
+    if pyproject.exists():
+        content = _read_file_safe(pyproject)
+        # Match lines like: "package-name>=1.0"
+        dep_re = re.compile(r'["\']([a-zA-Z0-9_-]+)(?:[>=<!~\[].*)?["\']')
+        in_deps = False
+        for line in content.split("\n"):
+            if "dependencies" in line.lower():
+                in_deps = True
+                continue
+            if in_deps and line.strip().startswith("]"):
+                in_deps = False
+            if in_deps:
+                m = dep_re.search(line)
+                if m:
+                    deps.add(m.group(1).lower())
+
+    # Parse setup.py/setup.cfg install_requires
+    for name in ["setup.py", "setup.cfg"]:
+        spath = repo_path / name
+        if spath.exists():
+            content = _read_file_safe(spath)
+            req_re = re.compile(r'["\']([a-zA-Z0-9_-]+)(?:[>=<!~\[].*)?["\']')
+            in_reqs = False
+            for line in content.split("\n"):
+                if "install_requires" in line:
+                    in_reqs = True
+                if in_reqs:
+                    m = req_re.search(line)
+                    if m:
+                        deps.add(m.group(1).lower())
+                    if "]" in line and in_reqs:
+                        in_reqs = False
+
+    return sorted(deps)
 
 
 def _extract_js_dependencies(repo_path: Path) -> list:
@@ -659,43 +667,18 @@ def layer_2_sca(repo_path: Path, language: str) -> list:
     hallucinated_count = 0
 
     if language == "python":
-        py_imports = _extract_python_imports(repo_path)
-        # Only check imports that are NOT in requirements files (likely hallucinated)
-        req_packages = set()
-        for name in ["requirements.txt", "requirements-dev.txt", "requirements-test.txt"]:
-            rpath = repo_path / name
-            if rpath.exists():
-                content = _read_file_safe(rpath)
-                for line in content.split("\n"):
-                    line = line.strip()
-                    if line and not line.startswith("#") and not line.startswith("-"):
-                        pkg = re.split(r'[><=!~\[]', line)[0].strip().replace("-", "_").lower()
-                        req_packages.add(pkg)
-
-        # Check each import that is NOT a local module
-        local_modules = set()
-        for fpath in _iter_repo_files(repo_path):
-            if fpath.suffix == ".py":
-                local_modules.add(fpath.stem)
-                for parent in fpath.relative_to(repo_path).parents:
-                    if str(parent) != ".":
-                        local_modules.add(str(parent).split("/")[0].split("\\")[0])
-
-        for imp in py_imports:
-            normalized = imp.replace("-", "_").lower()
-            if normalized in local_modules:
-                continue
-            if normalized in req_packages:
-                continue
-            # Check if it exists on PyPI
-            if not _check_package_exists_pypi(imp):
+        # Check DECLARED dependencies (from manifest files), not imports
+        py_deps = _extract_python_deps(repo_path)
+        log(f"  Found {len(py_deps)} declared Python dependencies")
+        for dep in py_deps:
+            if not _check_package_exists_pypi(dep):
                 hallucinated_count += 1
                 findings.append({
                     "layer": "sca",
                     "source": "hallucination-check",
-                    "package": imp,
+                    "package": dep,
                     "severity": "critical",
-                    "vulnerability": f"HALLUCINATED DEPENDENCY: Package '{imp}' not found on PyPI (slopsquatting risk)",
+                    "vulnerability": f"HALLUCINATED DEPENDENCY: Package '{dep}' not found on PyPI (slopsquatting risk)",
                     "fix_version": "Remove or replace with a real package",
                 })
 
