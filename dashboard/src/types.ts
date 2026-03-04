@@ -4,12 +4,17 @@ export type LayerStatus = 'pending' | 'running' | 'done' | 'error';
 
 export type AuditStatus =
   | 'queued'
+  | 'planning'
   | 'provisioning'
+  | 'executing'
+  | 'uploading'
   | 'cloning'
   | 'scanning'
   | 'analyzing'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'destroyed'
+  | 'error';
 
 export interface ScanLayer {
   id: number;
@@ -66,11 +71,12 @@ export interface AuditHistoryEntry {
 
 export interface PlatformStats {
   total_tasks: number;
-  completed_tasks: number;
-  total_findings: number;
   total_cost_usd: number;
-  avg_duration: number;
-  avg_risk_score: number;
+  total_savings_usd: number;
+  warm_pool_size: number;
+  warm_pool_idle: number;
+  warm_pool_busy: number;
+  average_task_duration_seconds: number;
 }
 
 export interface WSEvent {

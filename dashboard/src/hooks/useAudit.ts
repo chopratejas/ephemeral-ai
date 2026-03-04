@@ -330,12 +330,13 @@ export function useAudit() {
   const [result, setResult] = useState<AuditResult | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [stats, setStats] = useState<PlatformStats>({
-    total_tasks: 142,
-    completed_tasks: 139,
-    total_findings: 1247,
-    total_cost_usd: 1.38,
-    avg_duration: 10.4,
-    avg_risk_score: 38,
+    total_tasks: 0,
+    total_cost_usd: 0,
+    total_savings_usd: 0,
+    warm_pool_size: 0,
+    warm_pool_idle: 0,
+    warm_pool_busy: 0,
+    average_task_duration_seconds: 0,
   });
   const [history, setHistory] = useState<AuditHistoryEntry[]>([
     { task_id: 'tsk_a1b2c3d4', repo_name: 'pallets/flask', risk_score: 42, total_findings: 30, duration_seconds: 11.7, cost_usd: 0.009, completed_at: new Date(Date.now() - 120000).toISOString(), status: 'completed' },
@@ -444,8 +445,6 @@ export function useAudit() {
       setStats((prev) => ({
         ...prev,
         total_tasks: prev.total_tasks + 1,
-        completed_tasks: prev.completed_tasks + 1,
-        total_findings: prev.total_findings + report.findings.length,
         total_cost_usd: prev.total_cost_usd + report.cost_usd,
       }));
 
@@ -517,7 +516,7 @@ export function useAudit() {
                   if (timerRef.current) clearInterval(timerRef.current);
                   setResult(status);
                   setView('report');
-                } else if (status.status === 'failed') {
+                } else if (status.status === 'failed' || status.status === 'error') {
                   clearInterval(poll);
                   if (timerRef.current) clearInterval(timerRef.current);
                   setError('Audit failed');
@@ -526,7 +525,7 @@ export function useAudit() {
               } catch {
                 // Continue polling
               }
-            }, 2000);
+            }, 5000);
           }
         );
       } catch {
