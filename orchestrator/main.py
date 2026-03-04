@@ -21,6 +21,7 @@ from .droplet_manager import (
     wait_for_active,
 )
 from .models import (
+    AuditRequest,
     CallbackPayload,
     DropletInfo,
     PhaseRecord,
@@ -147,6 +148,128 @@ async def cancel_task(task_id: str):
     _record_phase(task, TaskPhase.FAILED)
     task.error = "Cancelled by user"
     return {"ok": True}
+
+
+# ========================================
+# CodeScope Audit Endpoint
+# ========================================
+
+
+@app.post("/api/v1/audit", response_model=TaskResponse)
+async def submit_audit(req: AuditRequest):
+    """Submit a CodeScope security audit for a GitHub repository.
+
+    Clones the repo into an ephemeral Droplet, runs 7-layer analysis,
+    uses Gradient AI for synthesis, and destroys the VM after.
+    """
+    if not rate_limiter.check():
+        raise HTTPException(429, "Rate limit exceeded")
+
+    task_id = str(uuid.uuid4())
+    task = Task(
+        task_id=task_id,
+        prompt=f"CodeScope audit: {req.repo_url} (branch: {req.branch})",
+    )
+    tasks[task_id] = task
+
+    asyncio.create_task(_run_audit(task, req))
+
+    ws_url = f"ws://{settings.orchestrator_url.replace('http://', '').replace('https://', '')}/ws/tasks/{task_id}"
+    return TaskResponse(task_id=task_id, status=TaskPhase.PLANNING, websocket_url=ws_url)
+
+
+async def _run_audit(task: Task, req: AuditRequest) -> None:
+    """Execute a CodeScope audit through the warm pool pipeline."""
+    task_id = task.task_id
+
+    try:
+        # Phase 1: Planning (lightweight - no LLM needed for audits)
+        _record_phase(task, TaskPhase.PLANNING)
+        await ws_manager.broadcast(task_id, "planning", {"type": "security_audit", "repo": req.repo_url})
+
+        slug = "s-1vcpu-2gb"  # Audits need RAM for cloning + analysis tools
+        cost_report = build_cost_report(slug)
+        task.cost = cost_report
+
+        if not budget_tracker.check_budget(cost_report.total_cost_usd):
+            raise Exception("Daily budget exceeded")
+
+        # Phase 2: Route to warm pool or cold start
+        _record_phase(task, TaskPhase.PROVISIONING)
+
+        # Check warm pool for an idle worker
+        worker = warm_pool.get_idle_worker(slug)
+        if worker:
+            warm_pool.mark_busy(worker.worker_id, task_id)
+            upload_urls = generate_upload_presigned_urls(task_id)
+            task_queue.enqueue(worker.worker_id, {
+                "task_id": task_id,
+                "type": "audit",
+                "repo_url": req.repo_url,
+                "branch": req.branch,
+                "description": f"CodeScope audit: {req.repo_url}",
+                "upload_urls": upload_urls,
+            })
+            task.droplet.id = worker.droplet_id
+            task.droplet.ip = worker.droplet_ip
+            task.droplet.slug = worker.size_slug
+            await ws_manager.broadcast(task_id, "warm_hit", {"worker_id": worker.worker_id[:8]})
+            logger.info("Audit %s routed to warm worker %s", task_id[:8], worker.worker_id[:8])
+        else:
+            # Cold start
+            await ws_manager.broadcast(task_id, "provisioning", {"reason": "no_warm_worker"})
+
+            active = await count_active_droplets()
+            if active >= settings.max_concurrent_droplets:
+                raise Exception(f"Max Droplets reached ({settings.max_concurrent_droplets})")
+
+            worker_id = str(uuid.uuid4())
+            droplet_info = await create_worker_droplet(slug, worker_id)
+            droplet_id = droplet_info["droplet_id"]
+
+            active_info = await wait_for_active(droplet_id)
+
+            warm_pool.add_worker(
+                worker_id=worker_id,
+                droplet_id=droplet_id,
+                droplet_ip=active_info.get("ip", ""),
+                size_slug=slug,
+            )
+
+            upload_urls = generate_upload_presigned_urls(task_id)
+            task_queue.enqueue(worker_id, {
+                "task_id": task_id,
+                "type": "audit",
+                "repo_url": req.repo_url,
+                "branch": req.branch,
+                "description": f"CodeScope audit: {req.repo_url}",
+                "upload_urls": upload_urls,
+            })
+            warm_pool.mark_busy(worker_id, task_id)
+
+            task.droplet.id = droplet_id
+            task.droplet.ip = active_info.get("ip", "")
+            task.droplet.slug = slug
+
+            await ws_manager.broadcast(task_id, "droplet_active", {
+                "droplet_id": droplet_id,
+                "ip": task.droplet.ip,
+            })
+            logger.info("Audit %s assigned to new worker %s", task_id[:8], worker_id[:8])
+
+        # Phase 3: Wait for completion
+        _record_phase(task, TaskPhase.EXECUTING)
+        await ws_manager.broadcast(task_id, "executing", {"type": "audit"})
+        budget_tracker.record_spend(cost_report.total_cost_usd)
+
+        timeout = 900  # 15 min max for audits (clone + install tools + 7 layers + AI)
+        await _wait_for_completion(task, timeout)
+
+    except Exception as e:
+        logger.error("Audit %s failed: %s", task_id[:8], e)
+        task.error = str(e)
+        _record_phase(task, TaskPhase.FAILED)
+        await ws_manager.broadcast(task_id, "error", {"message": str(e)})
 
 
 @app.post("/api/v1/tasks/{task_id}/callback")

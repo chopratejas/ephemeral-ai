@@ -31,6 +31,7 @@ class TaskCategory(str, Enum):
     API_INTEGRATION = "api_integration"
     ANALYSIS = "analysis"
     BATCH_PROCESSING = "batch_processing"
+    SECURITY_AUDIT = "security_audit"
 
 
 class TerminationPolicy(str, Enum):
@@ -225,3 +226,11 @@ class StatsResponse(BaseModel):
     warm_pool_size: int = 0
     warm_pool_idle: int = 0
     warm_pool_busy: int = 0
+
+
+# --- CodeScope Audit ---
+
+
+class AuditRequest(BaseModel):
+    repo_url: str
+    branch: str = "main"

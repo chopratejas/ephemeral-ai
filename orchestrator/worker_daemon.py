@@ -707,6 +707,83 @@ def clean_workspace() -> None:
     WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def execute_audit(task: dict) -> None:
+    """Run a CodeScope 7-layer security audit.
+
+    The audit script is pre-built (not LLM-generated) for reliability.
+    It clones a GitHub repo, runs 7 analysis layers, and uses Gradient AI
+    for synthesis.
+    """
+    task_id = task.get("task_id", "unknown")
+    repo_url = task.get("repo_url", "")
+    branch = task.get("branch", "main")
+
+    log(f"\n{'=' * 60}")
+    log(f"CODESCOPE AUDIT: {task_id}")
+    log(f"REPO: {repo_url}")
+    log(f"BRANCH: {branch}")
+    log(f"{'=' * 60}\n")
+
+    post_task_status(task_id, "running", "audit_starting")
+
+    try:
+        # Run the CodeScope script
+        codescope_path = Path("/opt/workbench/codescope.py")
+        if not codescope_path.exists():
+            raise FileNotFoundError("CodeScope script not found at /opt/workbench/codescope.py")
+
+        cmd = [
+            sys.executable, str(codescope_path),
+            repo_url,
+            "--branch", branch,
+            "--gradient-key", GRADIENT_KEY,
+            "--model", GRADIENT_MODEL,
+        ]
+
+        log("Starting CodeScope audit...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=480,  # 8 min max for audits
+            cwd="/opt/audit",
+        )
+
+        log(f"CodeScope stdout:\n{result.stdout[-2000:]}")
+        if result.stderr:
+            log(f"CodeScope stderr:\n{result.stderr[-1000:]}")
+
+        if result.returncode == 0:
+            log("CodeScope audit completed successfully!")
+            task["_final_status"] = "completed"
+            task["_final_exit_code"] = 0
+        else:
+            log(f"CodeScope audit finished with exit code {result.returncode}")
+            task["_final_status"] = "completed"  # Still upload results even if some layers failed
+            task["_final_exit_code"] = result.returncode
+
+        task["_attempts"] = 1
+        task["_language"] = "codescope"
+
+    except subprocess.TimeoutExpired:
+        log("CodeScope audit timed out (480s)")
+        task["_final_status"] = "failed"
+        task["_final_exit_code"] = 124
+        task["_attempts"] = 1
+        task["_language"] = "codescope"
+
+    except Exception as e:
+        log(f"CodeScope audit error: {e}")
+        log(traceback.format_exc())
+        task["_final_status"] = "failed"
+        task["_final_exit_code"] = 1
+        task["_attempts"] = 1
+        task["_language"] = "codescope"
+
+    # Upload results (same as regular tasks)
+    upload_task_results(task)
+
+
 def execute_task(task: dict) -> None:
     """Run the full self-healing code generation and execution cycle for a task.
 
@@ -927,9 +1004,15 @@ def main() -> None:
             # Clean workspace from previous task
             clean_workspace()
 
-            # Execute the task
+            # Execute the task (dispatch by type)
             try:
-                execute_task(task)
+                if task.get("type") == "audit":
+                    # CodeScope security audit
+                    execute_audit(task)
+                else:
+                    # Standard code generation task
+                    execute_task(task)
+
                 if task.get("_final_status") == "completed":
                     tasks_completed += 1
                 else:
@@ -938,7 +1021,6 @@ def main() -> None:
                 log(f"Unhandled error executing task {task_id}: {e}")
                 log(traceback.format_exc())
                 tasks_failed += 1
-                # Best-effort: notify Orchestrator of failure
                 post_task_status(task_id, "failed", "unhandled_error",
                                  {"error": str(e)[:500]})
 
