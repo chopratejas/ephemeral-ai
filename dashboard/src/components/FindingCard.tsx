@@ -4,6 +4,8 @@ import SeverityBadge from './SeverityBadge';
 
 interface FindingCardProps {
   finding: Finding;
+  auditTaskId?: string;
+  repoUrl?: string;
 }
 
 
@@ -107,30 +109,92 @@ function DiffView({ finding }: { finding: Finding }) {
         </pre>
       </div>
 
-      {/* Create PR button */}
-      <div className="px-3 py-2.5 border-t border-border bg-[#0a0a0f] flex items-center justify-end">
-        <div className="relative group">
-          <button
-            disabled
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border border-border bg-surface text-text-muted cursor-not-allowed opacity-50"
-          >
-            <LockIcon />
-            Create PR
-          </button>
-          <div className="absolute bottom-full right-0 mb-2 px-2.5 py-1.5 text-xs font-mono text-text-secondary bg-[#0a0a0f] border border-border rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-            Requires GitHub OAuth
-          </div>
-        </div>
+      {/* Create PR */}
+      <div className="px-3 py-2.5 border-t border-border bg-[#0a0a0f] flex items-center justify-end gap-2">
+        <span className="text-xs text-text-muted font-mono">
+          Fix is applied, built, and tested on the Droplet
+        </span>
+        <button
+          disabled
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border border-border bg-surface text-text-muted cursor-not-allowed opacity-50"
+          title="Connect GitHub to create PRs (coming soon)"
+        >
+          <LockIcon />
+          Create PR
+        </button>
       </div>
     </div>
   );
 }
 
-export default function FindingCard({ finding }: FindingCardProps) {
+export default function FindingCard({ finding, auditTaskId, repoUrl: _repoUrl }: FindingCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showFix, setShowFix] = useState(false);
+  const [fixStatus, setFixStatus] = useState<'idle' | 'fixing' | 'done' | 'error'>('idle');
+  const [fixMessage, setFixMessage] = useState('');
 
   const hasFix = !!(finding.fix || finding.fix_code);
+
+  const handleFix = async () => {
+    if (!auditTaskId) return;
+    setFixStatus('fixing');
+    setFixMessage('Applying fix on Droplet...');
+    setShowFix(true);
+    if (!expanded) setExpanded(true);
+
+    try {
+      const API = import.meta.env.VITE_API_URL || 'https://ephemeral-ai-dgdbw.ondigitalocean.app';
+      const resp = await fetch(`${API}/api/v1/findings/fix`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audit_task_id: auditTaskId,
+          finding: {
+            file: finding.file,
+            line: finding.line,
+            title: finding.title,
+            description: finding.description,
+            fix: finding.fix,
+            fix_code: finding.fix_code,
+            severity: finding.severity,
+          },
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.text();
+        setFixStatus('error');
+        setFixMessage(`Fix failed: ${err}`);
+        return;
+      }
+
+      const data = await resp.json();
+      setFixMessage(`Fix in progress (task: ${data.fix_task_id?.slice(0, 8)}). Building and testing...`);
+
+      // Poll for completion
+      const fixTaskId = data.fix_task_id;
+      const poll = setInterval(async () => {
+        try {
+          const statusResp = await fetch(`${API}/api/v1/tasks/${fixTaskId}`);
+          const statusData = await statusResp.json();
+          if (statusData.status === 'completed') {
+            clearInterval(poll);
+            setFixStatus('done');
+            setFixMessage('Fix applied, built, and committed on the Droplet.');
+          } else if (statusData.status === 'failed') {
+            clearInterval(poll);
+            setFixStatus('error');
+            setFixMessage(statusData.error || 'Fix failed');
+          }
+        } catch {
+          // keep polling
+        }
+      }, 3000);
+    } catch (e) {
+      setFixStatus('error');
+      setFixMessage(`Error: ${e}`);
+    }
+  };
 
   return (
     <div
@@ -180,18 +244,29 @@ export default function FindingCard({ finding }: FindingCardProps) {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setShowFix(!showFix);
-              if (!expanded && !showFix) setExpanded(true);
+              if (fixStatus === 'idle' && auditTaskId) {
+                handleFix();
+              } else {
+                setShowFix(!showFix);
+                if (!expanded && !showFix) setExpanded(true);
+              }
             }}
+            disabled={fixStatus === 'fixing'}
             className={`shrink-0 flex items-center gap-1.5 px-3 py-3.5 text-xs font-mono transition-colors ${
-              showFix
-                ? 'text-accent-teal bg-accent-teal/10'
-                : 'text-text-muted hover:text-accent-teal hover:bg-accent-teal/5'
+              fixStatus === 'fixing'
+                ? 'text-accent-teal bg-accent-teal/10 animate-pulse'
+                : fixStatus === 'done'
+                  ? 'text-accent-green bg-accent-green/10'
+                  : showFix
+                    ? 'text-accent-teal bg-accent-teal/10'
+                    : 'text-text-muted hover:text-accent-teal hover:bg-accent-teal/5'
             }`}
-            title="Generate Fix"
+            title={fixStatus === 'fixing' ? 'Fixing...' : fixStatus === 'done' ? 'Fix applied' : 'Fix on Droplet'}
           >
             <WrenchIcon />
-            <span className="hidden sm:inline">Fix</span>
+            <span className="hidden sm:inline">
+              {fixStatus === 'fixing' ? 'Fixing...' : fixStatus === 'done' ? 'Fixed' : 'Fix'}
+            </span>
           </button>
         )}
       </div>
@@ -239,6 +314,22 @@ export default function FindingCard({ finding }: FindingCardProps) {
               </div>
             )}
 
+            {fixMessage && (
+              <div
+                className="px-4 py-2.5 text-sm font-mono"
+                style={{
+                  background: fixStatus === 'done' ? 'rgba(34,197,94,0.06)' :
+                              fixStatus === 'error' ? 'rgba(239,68,68,0.06)' :
+                              'rgba(20,184,166,0.06)',
+                  color: fixStatus === 'done' ? '#22c55e' :
+                         fixStatus === 'error' ? '#ef4444' :
+                         '#14b8a6',
+                  borderTop: '1px solid rgba(30,30,46,0.5)',
+                }}
+              >
+                {fixMessage}
+              </div>
+            )}
             {showFix && <DiffView finding={finding} />}
 
             {(finding.owasp || finding.cwe) && (

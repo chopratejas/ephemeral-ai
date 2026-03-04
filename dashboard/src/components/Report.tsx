@@ -251,7 +251,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       {/* Findings */}
       <div className="space-y-3 mb-10">
         {filteredFindings.map((finding) => (
-          <FindingCard key={finding.id} finding={finding} />
+          <FindingCard key={finding.id} finding={finding} auditTaskId={result.task_id} repoUrl={result.repo_url} />
         ))}
         {filteredFindings.length === 0 && (
           <div className="text-center font-mono" style={{ padding: '32px 0', fontSize: '14px', color: '#52525b' }}>
