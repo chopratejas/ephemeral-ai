@@ -20,7 +20,7 @@ export default {
         'accent-red': '#ef4444',
         'accent-orange': '#f59e0b',
         'accent-blue': '#3b82f6',
-        'accent-purple': '#8b5cf6',
+        'accent-teal': '#14b8a6',
       },
       fontSize: {
         '2xs': ['0.75rem', { lineHeight: '1rem' }],  // 12px, same as xs

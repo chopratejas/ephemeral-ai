@@ -90,8 +90,8 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
                     padding: '0 20px',
                   }}
                   onFocus={(e) => {
-                    e.currentTarget.style.borderColor = '#8b5cf6';
-                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(139, 92, 246, 0.1)';
+                    e.currentTarget.style.borderColor = '#14b8a6';
+                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(20, 184, 166, 0.1)';
                   }}
                   onBlur={(e) => {
                     e.currentTarget.style.borderColor = '#1e1e2e';
@@ -106,7 +106,7 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
                 style={{
                   height: '56px',
                   padding: '0 32px',
-                  background: '#8b5cf6',
+                  background: '#14b8a6',
                   borderRadius: '12px',
                   fontSize: '15px',
                   border: 'none',
@@ -114,11 +114,11 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
                 }}
                 onMouseEnter={(e) => {
                   if (!loading && url.trim()) {
-                    e.currentTarget.style.background = '#7c3aed';
+                    e.currentTarget.style.background = '#0d9488';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = '#8b5cf6';
+                  e.currentTarget.style.background = '#14b8a6';
                 }}
               >
                 <span>Audit</span>
@@ -194,7 +194,7 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
               <div key={item.step} className="flex gap-6">
                 <span
                   className="shrink-0 font-mono"
-                  style={{ fontSize: '13px', color: '#8b5cf6', paddingTop: '2px' }}
+                  style={{ fontSize: '13px', color: '#14b8a6', paddingTop: '2px' }}
                 >
                   {item.step}
                 </span>

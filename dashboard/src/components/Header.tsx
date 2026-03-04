@@ -15,14 +15,14 @@ function ShieldIcon() {
     >
       <path
         d="M16 2L4 8v8c0 7.18 5.12 13.9 12 16 6.88-2.1 12-8.82 12-16V8L16 2z"
-        fill="#8b5cf6"
+        fill="#14b8a6"
         fillOpacity="0.15"
-        stroke="#8b5cf6"
+        stroke="#14b8a6"
         strokeWidth="1.5"
       />
       <path
         d="M12 16l3 3 6-6"
-        stroke="#8b5cf6"
+        stroke="#14b8a6"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"

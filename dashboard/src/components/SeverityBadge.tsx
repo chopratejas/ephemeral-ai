@@ -5,42 +5,47 @@ interface SeverityBadgeProps {
   size?: 'sm' | 'md';
 }
 
-const config: Record<Severity, { label: string; bg: string; text: string; border: string }> = {
+const config: Record<Severity, { label: string; bg: string; text: string; border: string; hex: string }> = {
   critical: {
     label: 'CRIT',
     bg: 'bg-accent-red/10',
     text: 'text-accent-red',
     border: 'border-accent-red/20',
+    hex: '#ef4444',
   },
   high: {
     label: 'HIGH',
     bg: 'bg-accent-orange/10',
     text: 'text-accent-orange',
     border: 'border-accent-orange/20',
+    hex: '#f59e0b',
   },
   medium: {
     label: 'MED',
     bg: 'bg-yellow-500/10',
     text: 'text-yellow-400',
     border: 'border-yellow-500/20',
+    hex: '#eab308',
   },
   low: {
     label: 'LOW',
     bg: 'bg-accent-blue/10',
     text: 'text-accent-blue',
     border: 'border-accent-blue/20',
+    hex: '#3b82f6',
   },
   info: {
     label: 'INFO',
     bg: 'bg-text-secondary/10',
     text: 'text-text-secondary',
     border: 'border-text-secondary/20',
+    hex: '#71717a',
   },
 };
 
 export default function SeverityBadge({ severity, size = 'sm' }: SeverityBadgeProps) {
   const c = config[severity];
-  const sizeClasses = size === 'sm' ? 'text-xs px-1.5 py-0.5' : 'text-xs px-2 py-1';
+  const sizeClasses = size === 'sm' ? 'text-xs px-1.5 py-0.5' : 'text-xs px-2.5 py-1';
 
   return (
     <span
@@ -55,8 +60,11 @@ export function SeverityCount({ severity, count }: { severity: Severity; count: 
   const c = config[severity];
 
   return (
-    <div className={`flex flex-col items-center justify-center px-4 py-3 rounded-lg border ${c.bg} ${c.border} min-w-[64px]`}>
-      <span className={`text-xl font-bold font-mono ${c.text}`}>{count}</span>
+    <div
+      className={`flex flex-col items-center justify-center px-5 py-3.5 rounded-lg border ${c.bg} ${c.border} min-w-[72px]`}
+      style={{ borderLeft: `3px solid ${c.hex}` }}
+    >
+      <span className={`text-2xl font-bold font-mono ${c.text}`}>{count}</span>
       <span className={`text-xs font-mono font-semibold ${c.text} opacity-70 mt-0.5`}>
         {c.label}
       </span>

@@ -21,7 +21,7 @@ function StatusIcon({ status }: { status: ScanLayer['status'] }) {
       return (
         <span
           className="inline-block rounded-full animate-pulse-dot"
-          style={{ width: '8px', height: '8px', background: '#8b5cf6' }}
+          style={{ width: '8px', height: '8px', background: '#14b8a6' }}
         />
       );
     case 'done':
@@ -71,7 +71,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
           </h2>
           <span
             className="font-mono"
-            style={{ fontSize: '18px', color: '#8b5cf6' }}
+            style={{ fontSize: '18px', color: '#14b8a6' }}
           >
             {repoName}
           </span>
@@ -111,7 +111,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
                 style={{
                   height: '100%',
                   width: `${(completedLayers / layers.length) * 100}%`,
-                  background: '#8b5cf6',
+                  background: '#14b8a6',
                   borderRadius: '2px',
                 }}
               />
@@ -133,7 +133,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
                 style={{
                   padding: '14px 16px',
                   borderBottom: idx < layers.length - 1 ? '1px solid #1e1e2e' : 'none',
-                  background: layer.status === 'running' ? 'rgba(139, 92, 246, 0.04)' : 'transparent',
+                  background: layer.status === 'running' ? 'rgba(20, 184, 166, 0.04)' : 'transparent',
                 }}
               >
                 <StatusIcon status={layer.status} />
@@ -159,7 +159,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
                     </span>
                   )}
                   {layer.status === 'running' && (
-                    <span style={{ color: '#8b5cf6' }}>analyzing...</span>
+                    <span style={{ color: '#14b8a6' }}>analyzing...</span>
                   )}
                 </span>
               </div>
@@ -199,7 +199,7 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
                 const isFindings = line.includes('findings');
 
                 let color = '#52525b';
-                if (isLayer) color = '#8b5cf6';
+                if (isLayer) color = '#14b8a6';
                 if (isComplete) color = '#22c55e';
                 if (isError) color = '#ef4444';
                 if (isFindings) color = '#e4e4e7';

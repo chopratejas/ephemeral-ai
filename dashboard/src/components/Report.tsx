@@ -113,7 +113,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
             >
               Report
             </h2>
-            <span className="font-mono" style={{ fontSize: '16px', color: '#8b5cf6' }}>
+            <span className="font-mono" style={{ fontSize: '16px', color: '#14b8a6' }}>
               {result.repo_name}
             </span>
           </div>
@@ -157,11 +157,11 @@ export default function Report({ result, onNewAudit }: ReportProps) {
           border: '1px solid #1e1e2e',
           borderRadius: '12px',
           background: '#12121a',
-          padding: '24px',
+          padding: '28px',
         }}
       >
         <div
-          className="font-semibold uppercase tracking-wider mb-4"
+          className="font-semibold uppercase tracking-wider mb-5"
           style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
         >
           Risk Score
@@ -190,6 +190,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
         className="mb-8"
         style={{
           border: '1px solid #1e1e2e',
+          borderLeft: '3px solid #14b8a6',
           borderRadius: '12px',
           background: '#12121a',
           padding: '24px',
@@ -197,15 +198,15 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       >
         <div
           className="font-semibold uppercase tracking-wider mb-3"
-          style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
+          style={{ fontSize: '11px', color: '#14b8a6', letterSpacing: '0.08em' }}
         >
-          Analysis Summary
+          AI Analysis Summary
         </div>
         <p style={{ fontSize: '14px', color: '#71717a', lineHeight: 1.7 }}>{result.summary}</p>
       </div>
 
-      {/* Category Filters */}
-      <div className="flex flex-wrap gap-2 mb-5">
+      {/* Category Filters + Total Count */}
+      <div className="flex flex-wrap items-center gap-2 mb-5">
         <button
           onClick={() => setActiveCategory(null)}
           className="font-mono transition-colors"
@@ -213,9 +214,9 @@ export default function Report({ result, onNewAudit }: ReportProps) {
             padding: '4px 10px',
             fontSize: '12px',
             borderRadius: '6px',
-            border: `1px solid ${activeCategory === null ? 'rgba(139, 92, 246, 0.3)' : '#1e1e2e'}`,
-            background: activeCategory === null ? 'rgba(139, 92, 246, 0.08)' : '#12121a',
-            color: activeCategory === null ? '#8b5cf6' : '#71717a',
+            border: `1px solid ${activeCategory === null ? 'rgba(20, 184, 166, 0.3)' : '#1e1e2e'}`,
+            background: activeCategory === null ? 'rgba(20, 184, 166, 0.08)' : '#12121a',
+            color: activeCategory === null ? '#14b8a6' : '#71717a',
           }}
         >
           All ({result.findings.length})
@@ -231,19 +232,25 @@ export default function Report({ result, onNewAudit }: ReportProps) {
                 padding: '4px 10px',
                 fontSize: '12px',
                 borderRadius: '6px',
-                border: `1px solid ${activeCategory === cat ? 'rgba(139, 92, 246, 0.3)' : '#1e1e2e'}`,
-                background: activeCategory === cat ? 'rgba(139, 92, 246, 0.08)' : '#12121a',
-                color: activeCategory === cat ? '#8b5cf6' : '#71717a',
+                border: `1px solid ${activeCategory === cat ? 'rgba(20, 184, 166, 0.3)' : '#1e1e2e'}`,
+                background: activeCategory === cat ? 'rgba(20, 184, 166, 0.08)' : '#12121a',
+                color: activeCategory === cat ? '#14b8a6' : '#71717a',
               }}
             >
               {cat} ({count})
             </button>
           );
         })}
+        <span
+          className="font-mono ml-auto"
+          style={{ fontSize: '12px', color: '#52525b' }}
+        >
+          Total: {filteredFindings.length} finding{filteredFindings.length !== 1 ? 's' : ''}
+        </span>
       </div>
 
       {/* Findings */}
-      <div className="space-y-2 mb-10">
+      <div className="space-y-3 mb-10">
         {filteredFindings.map((finding) => (
           <FindingCard key={finding.id} finding={finding} />
         ))}
@@ -302,20 +309,20 @@ export default function Report({ result, onNewAudit }: ReportProps) {
           onClick={downloadMarkdown}
           className="flex items-center gap-2 font-mono transition-colors"
           style={{
-            padding: '8px 16px',
+            padding: '10px 20px',
             fontSize: '13px',
-            color: '#71717a',
+            color: '#e4e4e7',
             background: '#12121a',
-            border: '1px solid #1e1e2e',
+            border: '1px solid #14b8a6',
             borderRadius: '8px',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = '#52525b';
-            e.currentTarget.style.color = '#e4e4e7';
+            e.currentTarget.style.background = 'rgba(20, 184, 166, 0.08)';
+            e.currentTarget.style.borderColor = '#14b8a6';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = '#1e1e2e';
-            e.currentTarget.style.color = '#71717a';
+            e.currentTarget.style.background = '#12121a';
+            e.currentTarget.style.borderColor = '#14b8a6';
           }}
         >
           <DownloadIcon />
@@ -325,7 +332,7 @@ export default function Report({ result, onNewAudit }: ReportProps) {
           onClick={downloadJSON}
           className="flex items-center gap-2 font-mono transition-colors"
           style={{
-            padding: '8px 16px',
+            padding: '10px 20px',
             fontSize: '13px',
             color: '#71717a',
             background: '#12121a',

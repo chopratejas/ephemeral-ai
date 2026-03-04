@@ -1,10 +1,18 @@
 import { useState } from 'react';
-import type { Finding } from '../types';
+import type { Finding, Severity } from '../types';
 import SeverityBadge from './SeverityBadge';
 
 interface FindingCardProps {
   finding: Finding;
 }
+
+const SEVERITY_BORDER_COLORS: Record<Severity, string> = {
+  critical: '#ef4444',
+  high: '#f59e0b',
+  medium: '#eab308',
+  low: '#3b82f6',
+  info: '#71717a',
+};
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
@@ -130,27 +138,36 @@ export default function FindingCard({ finding }: FindingCardProps) {
   const [showFix, setShowFix] = useState(false);
 
   const hasFix = !!(finding.fix || finding.fix_code);
+  const borderColor = SEVERITY_BORDER_COLORS[finding.severity];
 
   return (
-    <div className="border border-border rounded-lg bg-surface overflow-hidden">
+    <div
+      className="border border-border rounded-lg bg-surface overflow-hidden"
+      style={{ borderLeft: `3px solid ${borderColor}` }}
+    >
       <div className="flex items-start">
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex-1 flex items-start gap-3 px-4 py-3 text-left hover:bg-surface-hover transition-colors"
+          className="flex-1 flex items-start gap-3 px-4 py-3.5 text-left hover:bg-surface-hover transition-colors"
         >
           <span className="mt-0.5 text-text-muted">
             <ChevronIcon expanded={expanded} />
           </span>
 
-          <SeverityBadge severity={finding.severity} />
+          <SeverityBadge severity={finding.severity} size="md" />
 
           <div className="flex-1 min-w-0">
             <span className="text-sm text-text-primary">{finding.title}</span>
             {finding.file && (
-              <span className="ml-2 text-xs font-mono text-text-muted">
-                {finding.file}
-                {finding.line > 0 && `:${finding.line}`}
-              </span>
+              <div className="mt-1">
+                <span
+                  className="inline-block text-xs font-mono px-1.5 py-0.5 rounded"
+                  style={{ color: '#71717a', background: 'rgba(30, 30, 46, 0.6)' }}
+                >
+                  {finding.file}
+                  {finding.line > 0 && `:${finding.line}`}
+                </span>
+              </div>
             )}
           </div>
 
@@ -175,10 +192,10 @@ export default function FindingCard({ finding }: FindingCardProps) {
               setShowFix(!showFix);
               if (!expanded && !showFix) setExpanded(true);
             }}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-3 text-xs font-mono transition-colors ${
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-3.5 text-xs font-mono transition-colors ${
               showFix
-                ? 'text-accent-purple bg-accent-purple/10'
-                : 'text-text-muted hover:text-accent-purple hover:bg-accent-purple/5'
+                ? 'text-accent-teal bg-accent-teal/10'
+                : 'text-text-muted hover:text-accent-teal hover:bg-accent-teal/5'
             }`}
             title="Generate Fix"
           >
@@ -188,24 +205,46 @@ export default function FindingCard({ finding }: FindingCardProps) {
         )}
       </div>
 
-      {expanded && (
+      <div
+        className="overflow-hidden transition-all duration-300 ease-in-out"
+        style={{
+          maxHeight: expanded ? '2000px' : '0',
+          opacity: expanded ? 1 : 0,
+        }}
+      >
         <div className="px-4 pb-4 pt-0 ml-[22px] border-t border-border">
           <div className="pt-3 space-y-3">
-            <p className="text-sm text-text-secondary leading-relaxed">
+            <p className="text-sm text-text-secondary" style={{ lineHeight: 1.8 }}>
               {finding.description}
             </p>
 
-            {!showFix && (
-              <div className="flex items-start gap-2 px-3 py-2.5 bg-accent-green/5 border border-accent-green/10 rounded">
-                <span className="text-accent-green text-xs mt-0.5 shrink-0">&rsaquo;</span>
-                <div>
-                  <span className="text-xs font-semibold text-accent-green uppercase tracking-wider">
-                    Suggested Fix
-                  </span>
-                  <p className="text-sm text-text-secondary mt-1 leading-relaxed">
-                    {finding.fix}
-                  </p>
-                </div>
+            {!showFix && finding.fix && (
+              <div
+                className="px-4 py-3 rounded"
+                style={{
+                  borderLeft: '3px solid #22c55e',
+                  background: 'rgba(34, 197, 94, 0.04)',
+                }}
+              >
+                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#22c55e' }}>
+                  Suggested Fix
+                </span>
+                <p className="text-sm text-text-secondary mt-1.5" style={{ lineHeight: 1.7 }}>
+                  {finding.fix}
+                </p>
+                {finding.fix_code && (
+                  <pre
+                    className="mt-2 px-3 py-2.5 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap"
+                    style={{
+                      background: '#0a0a0f',
+                      border: '1px solid #1e1e2e',
+                      color: '#a5f3fc',
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    <code>{finding.fix_code}</code>
+                  </pre>
+                )}
               </div>
             )}
 
@@ -219,7 +258,7 @@ export default function FindingCard({ finding }: FindingCardProps) {
             )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

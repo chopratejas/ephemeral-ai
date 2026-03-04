@@ -14,14 +14,14 @@ export default function RiskScore({ score }: RiskScoreProps) {
   const { label, color } = getRiskLevel(score);
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-5">
       <div className="flex items-baseline gap-2">
         <span className="text-5xl font-bold font-mono text-text-primary">{score}</span>
         <span className="text-sm font-mono text-text-muted">/100</span>
       </div>
 
-      <div className="flex-1 max-w-[200px]">
-        <div className="h-2 bg-border rounded-full overflow-hidden">
+      <div className="flex-1 max-w-[320px]">
+        <div className="h-3 bg-border rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-1000 ease-out animate-progress"
             style={{
