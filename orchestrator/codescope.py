@@ -1,19 +1,20 @@
-"""CodeScope - 7-Layer AI Security Audit for GitHub Repositories.
-
-This script runs INSIDE a DigitalOcean Droplet. It is structured as a string
-constant that gets embedded in cloud-init, following the same pattern as
-worker_daemon.py.
-
-Given a GitHub repo URL, CodeScope:
-  1. Clones the repo
-  2. Detects the primary language
-  3. Runs 7 analysis layers (SAST, SCA, Secrets, Licenses, Tests, Health, AI)
-  4. Generates a comprehensive markdown report
-  5. Writes everything to /tmp/output/
-"""
+"""CodeScope - AI-Era Security Audit Engine."""
 
 CODESCOPE_SCRIPT = r'''#!/usr/bin/env python3
-"""CodeScope - 7-Layer AI Security Audit for GitHub Repositories.
+"""CodeScope - AI-Era Security Audit Engine.
+
+A 7-layer security audit engine that runs inside a DigitalOcean Droplet.
+Scans GitHub repos for security vulnerabilities with special focus on
+AI-generated code patterns.
+
+Layers:
+  1. SAST - Static Analysis (OWASP Top 10 + AI Code + LLM Security)
+  2. SCA - Software Composition Analysis + Hallucinated Dependency Detection
+  3. Secret Detection (with redaction)
+  4. License Compliance
+  5. Test Coverage Analysis
+  6. Repository Health
+  7. AI Synthesis (Gradient AI)
 
 Runs inside an ephemeral DigitalOcean Droplet with Python 3.11+, Node.js 18+,
 git, curl, jq, and network access.
@@ -22,6 +23,7 @@ git, curl, jq, and network access.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -30,12 +32,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 GRADIENT_KEY = os.environ.get("EPHEMERAL_GRADIENT_KEY", "")
-GRADIENT_MODEL = os.environ.get("EPHEMERAL_MODEL", "openai-gpt-oss-120b")
+GRADIENT_MODEL = os.environ.get("EPHEMERAL_MODEL", "llama3.3-70b-instruct")
 GRADIENT_API_URL = "https://inference.do-ai.run/v1/chat/completions"
 
 OUTPUT_DIR = Path("/tmp/output")
@@ -43,24 +46,35 @@ AUDIT_DIR = Path("/opt/audit")
 REPO_DIR = AUDIT_DIR / "repo"
 
 # Layer timeouts in seconds
-TIMEOUT_SAST = 60
-TIMEOUT_SCA = 30
+TIMEOUT_CLONE = 120
+TIMEOUT_SAST = 90
+TIMEOUT_SCA = 60
 TIMEOUT_SECRETS = 30
 TIMEOUT_LICENSES = 30
 TIMEOUT_TESTS = 30
 TIMEOUT_HEALTH = 15
 TIMEOUT_AI = 120
+TIMEOUT_PKG_CHECK = 10
 
 # File/directory exclusion patterns for scanning
-EXCLUDED_DIRS = {".git", "node_modules", "__pycache__", ".tox", ".mypy_cache",
-                 ".pytest_cache", "dist", "build", ".eggs", "venv", ".venv"}
+EXCLUDED_DIRS = {
+    ".git", "node_modules", "__pycache__", ".tox", ".mypy_cache",
+    ".pytest_cache", "dist", "build", ".eggs", "venv", ".venv",
+    "vendor", ".next", ".nuxt", "coverage", ".nyc_output",
+    "bower_components", ".gradle", "target", "out",
+}
 
-BINARY_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
-                     ".woff", ".woff2", ".ttf", ".eot", ".otf", ".mp3", ".mp4",
-                     ".avi", ".mov", ".zip", ".tar", ".gz", ".bz2", ".7z",
-                     ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-                     ".pyc", ".pyo", ".so", ".dylib", ".dll", ".exe",
-                     ".class", ".jar", ".war"}
+BINARY_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp3", ".mp4", ".avi", ".mov", ".webm", ".ogg", ".flac", ".wav",
+    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".xz",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".pyc", ".pyo", ".so", ".dylib", ".dll", ".exe", ".o", ".a",
+    ".class", ".jar", ".war", ".ear",
+    ".sqlite", ".db", ".sqlite3",
+    ".wasm",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +106,7 @@ def _run(cmd, timeout=60, cwd=None, env=None):
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
-        log(f"Command timed out ({timeout}s): {cmd[:3] if isinstance(cmd, list) else cmd}")
+        log(f"  Command timed out ({timeout}s): {cmd[:3] if isinstance(cmd, list) else cmd}")
         return -1, "", f"TimeoutError: exceeded {timeout}s"
     except FileNotFoundError:
         return -1, "", f"Command not found: {cmd[0] if isinstance(cmd, list) else cmd}"
@@ -106,9 +120,8 @@ def _is_scannable_file(path: Path) -> bool:
         return False
     if path.name.endswith(".min.js") or path.name.endswith(".min.css"):
         return False
-    # Skip very large files (>1MB)
     try:
-        if path.stat().st_size > 1_048_576:
+        if path.stat().st_size > 1_048_576:  # >1MB
             return False
     except OSError:
         return False
@@ -118,7 +131,6 @@ def _is_scannable_file(path: Path) -> bool:
 def _iter_repo_files(repo_path: Path):
     """Yield all scannable files in the repo, respecting exclusions."""
     for root, dirs, files in os.walk(repo_path):
-        # Modify dirs in-place to skip excluded directories
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
         for fname in files:
             fpath = Path(root) / fname
@@ -187,7 +199,6 @@ def detect_language(repo_path: Path) -> str:
             counts[lang] = counts.get(lang, 0) + 1
 
     if not counts:
-        # Fallback: check for common manifest files
         if (repo_path / "package.json").exists():
             return "javascript"
         if (repo_path / "requirements.txt").exists() or (repo_path / "setup.py").exists():
@@ -224,43 +235,98 @@ def install_audit_tools(language: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Layer 1: SAST (Static Analysis Security Testing)
+# Layer 1: SAST (Static Analysis Security Testing) - MASSIVELY EXPANDED
 # ---------------------------------------------------------------------------
 
-# Regex patterns for common vulnerability detection across languages
-SAST_PATTERNS = [
-    # Dangerous function calls
-    (r'\beval\s*\(', "high", "dangerous-eval", "Use of eval() can lead to code injection"),
-    (r'\bnew\s+Function\s*\(', "high", "dangerous-function-constructor", "new Function() can lead to code injection"),
-    (r'\.innerHTML\s*=', "medium", "innerHTML-xss", "Direct innerHTML assignment may lead to XSS"),
-    (r'dangerouslySetInnerHTML', "medium", "react-dangerous-html", "dangerouslySetInnerHTML may lead to XSS"),
+# OWASP Top 10 Patterns
+OWASP_PATTERNS = [
+    # --- A03: Injection ---
+    ("sql_injection", r"""(?:execute|query|raw)\s*\(\s*f["\']|(?:execute|query|raw)\s*\(\s*["\'].*?\%s|(?:SELECT|INSERT|UPDATE|DELETE|DROP).*?\+\s*(?:req\.|request\.|params\.|query\.)""", "high", "SQL injection via string concatenation"),
+    ("nosql_injection", r"""\$where|\$regex.*(?:req\.|request\.|params\.)""", "high", "NoSQL injection vector"),
+    ("command_injection", r"""(?:os\.system|os\.popen|subprocess\.call|subprocess\.run|child_process\.exec|child_process\.spawn)\s*\(.*(?:req\.|request\.|input|argv|params)""", "critical", "OS command injection with user input"),
+    ("template_injection", r"""render_template_string\s*\(.*(?:request\.|req\.)|\{\{.*(?:request\.|req\.)""", "high", "Server-side template injection"),
+    ("xpath_injection", r"""xpath\s*\(.*\+|evaluate\s*\(.*\+""", "medium", "XPath injection"),
+    ("ldap_injection", r"""ldap.*(?:search|bind).*(?:req\.|request\.|input)""", "medium", "LDAP injection"),
 
-    # SQL injection
-    (r'(?:"|\')\s*SELECT\s+.*["\']?\s*\+', "high", "sql-injection-concat", "SQL query built via string concatenation"),
-    (r'f["\'].*SELECT\s+.*\{', "high", "sql-injection-fstring", "SQL query built via f-string interpolation"),
-    (r'f["\'].*INSERT\s+.*\{', "high", "sql-injection-fstring", "SQL query built via f-string interpolation"),
-    (r'f["\'].*UPDATE\s+.*\{', "high", "sql-injection-fstring", "SQL query built via f-string interpolation"),
-    (r'f["\'].*DELETE\s+.*\{', "high", "sql-injection-fstring", "SQL query built via f-string interpolation"),
+    # --- A02: Cryptographic Failures ---
+    ("weak_hash_password", r"""(?:md5|sha1|sha256)\s*\(.*(?:password|passwd|pwd|secret)""", "critical", "Weak hash for password storage - use bcrypt/argon2"),
+    ("hardcoded_crypto_key", r"""(?:secret_key|encryption_key|aes_key|private_key)\s*=\s*["\'][^"\']{8,}["\']""", "critical", "Hardcoded cryptographic key"),
+    ("http_sensitive_url", r"""http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0|example\.com|placeholder).*(?:api|auth|login|token|password|secret)""", "medium", "Sensitive endpoint over plain HTTP"),
 
-    # Command injection
-    (r'child_process\.exec\s*\(', "high", "command-injection", "child_process.exec() is vulnerable to command injection"),
-    (r'\bos\.system\s*\(', "high", "command-injection", "os.system() is vulnerable to command injection"),
-    (r'\bos\.popen\s*\(', "high", "command-injection", "os.popen() is vulnerable to command injection"),
-    (r'subprocess\.call\s*\([^,\]]*shell\s*=\s*True', "high", "command-injection-shell", "subprocess with shell=True is vulnerable to injection"),
-    (r'subprocess\.run\s*\([^,\]]*shell\s*=\s*True', "medium", "command-injection-shell", "subprocess.run with shell=True may be vulnerable"),
+    # --- A05: Security Misconfiguration ---
+    ("debug_mode", r"""(?:DEBUG\s*=\s*True|app\.debug\s*=\s*True|"debug"\s*:\s*true|NODE_ENV.*development)""", "high", "Debug mode enabled - must be disabled in production"),
+    ("verbose_errors", r"""(?:traceback\.print_exc|console\.trace|e\.stack|stackTrace|res\.send\(err\)|res\.json\(.*error.*stack)""", "medium", "Verbose error information exposed to client"),
+    ("default_password", r"""(?:password|passwd|pwd)\s*[:=]\s*["\'](?:admin|password|123456|default|changeme|test|root)["\']""", "critical", "Default/weak password"),
 
-    # Path traversal
-    (r'\.\./\.\./\.\./', "medium", "path-traversal", "Potential path traversal with multiple ../"),
+    # --- A01: Broken Access Control ---
+    ("cors_wildcard", r"""(?:Access-Control-Allow-Origin|cors)\s*[:({]\s*["\']?\*["\']?|allowedOrigins.*\*|origin:\s*true""", "high", "CORS allows all origins - restrict to specific domains"),
+    ("no_csrf", r"""(?:csrf|xsrf).*(?:disabled|false|off)|(?:CSRF_ENABLED|WTF_CSRF_ENABLED)\s*=\s*False""", "high", "CSRF protection disabled"),
 
-    # Prototype pollution (JS)
-    (r'__proto__', "high", "prototype-pollution", "Access to __proto__ may lead to prototype pollution"),
-    (r'constructor\.prototype', "high", "prototype-pollution", "Direct prototype modification may lead to pollution"),
+    # --- A08: Integrity Failures ---
+    ("unsafe_deserialize_python", r"""(?:pickle\.loads?|yaml\.(?:load|unsafe_load)|shelve\.open|marshal\.loads)\s*\(""", "critical", "Unsafe deserialization - can lead to RCE"),
+    ("unsafe_deserialize_js", r"""(?:unserialize|deserialize)\s*\(.*(?:req\.|request\.|body|params|query)""", "high", "Unsafe deserialization of user input"),
+    ("eval_usage", r"""(?:^|\s)eval\s*\(|(?:^|\s)exec\s*\(|new\s+Function\s*\(|setTimeout\s*\(["\']|setInterval\s*\(["\']""", "critical", "eval/exec usage - potential code injection"),
 
-    # Hardcoded IPs (non-loopback, non-example)
-    (r'\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b', "low", "hardcoded-ip", "Hardcoded IP address detected"),
+    # --- A10: SSRF ---
+    ("ssrf_vector", r"""(?:requests\.get|fetch|axios|http\.get|urllib)\s*\(.*(?:req\.|request\.|params\.|query\.|body\.)""", "high", "User-controlled URL in server request (SSRF)"),
 
-    # Security-related TODOs
-    (r'(?:TODO|FIXME|HACK|XXX)\s*:?\s*.*(?:security|auth|password|secret|token|cred|vuln|csrf|xss|inject)', "low", "security-todo", "Security-related TODO/FIXME comment found"),
+    # --- XSS ---
+    ("xss_innerhtml", r"""\.innerHTML\s*=|dangerouslySetInnerHTML|v-html\s*=|\.html\s*\(.*(?:req\.|request\.|params)""", "high", "Direct HTML injection - XSS vector"),
+
+    # --- Path Traversal ---
+    ("path_traversal", r"""(?:\.\.\/|\.\.\\|path\.join|path\.resolve).*(?:req\.|request\.|params\.|query\.|body\.)""", "high", "Path traversal with user input"),
+
+    # --- Prototype Pollution (JS) ---
+    ("prototype_pollution", r"""__proto__|constructor\s*\[\s*["\']prototype["\']|Object\.assign\s*\(\s*\{\}.*(?:req\.|request\.|body)""", "high", "Prototype pollution vector"),
+]
+
+# AI-Generated Code Specific Patterns
+AI_CODE_PATTERNS = [
+    # --- AI01: Missing Input Validation (THE #1 AI FLAW) ---
+    ("no_input_validation_express", r"""app\.(?:get|post|put|delete|patch)\s*\(["\'][^"\']+["\']\s*,\s*(?:async\s+)?\(?(?:req|request)\s*,\s*(?:res|response)\s*\)?\s*(?:=>|{)\s*\n\s*(?!.*(?:validate|sanitize|check|joi|zod|yup|express-validator|celebrate))""", "high", "API route with no input validation (common in AI-generated code)"),
+    ("no_input_validation_fastapi", r"""@app\.(?:get|post|put|delete)\s*\(\s*["\'][^"\']+["\']\s*\)\s*\n\s*(?:async\s+)?def\s+\w+\s*\(\s*(?!.*(?:Query|Path|Body|Depends|HTTPBearer|Security))""", "high", "FastAPI route with no parameter validation"),
+    ("no_input_validation_flask", r"""@app\.route\s*\(.*\)\s*\n\s*def\s+\w+\s*\(\s*\)\s*:\s*\n\s*.*request\.(?:args|form|json|data)\.get\s*\(.*\)\s*\n\s*(?!.*(?:validate|sanitize|bleach|wtforms))""", "medium", "Flask route uses request data without validation"),
+
+    # --- AI02: Hallucinated Dependencies (Slopsquatting) ---
+    ("suspicious_import", r"""(?:from|import)\s+(?:ai_utils|ml_helper|data_processor|smart_api|auto_ml|neural_utils|deep_utils)""", "medium", "Potentially hallucinated package name (verify on PyPI/npm)"),
+
+    # --- AI03: Tutorial/Example Code Left in Production ---
+    ("todo_security", r"""(?:#|//|/\*)\s*(?:TODO|FIXME|HACK|XXX|TEMP|TEMPORARY).*(?:security|auth|password|token|secret|encrypt|sanitize|validate|permission)""", "high", "Security-related TODO left unfixed"),
+    ("example_url", r"""(?:https?://)?(?:example\.com|test\.com|foo\.bar|placeholder|YOUR_API_KEY|YOUR_SECRET|REPLACE_ME|CHANGEME)""", "medium", "Placeholder/example value in code"),
+    ("localhost_in_config", r"""(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+.*(?:production|prod|deploy|config)""", "medium", "Localhost URL in production config"),
+
+    # --- AI04: Missing Error Handling ---
+    ("empty_catch_python", r"""except(?:\s+\w+)?:\s*\n\s*(?:pass|\.\.\.)\s*$""", "medium", "Empty except block - errors silently swallowed"),
+    ("empty_catch_js", r"""catch\s*\(\s*\w*\s*\)\s*\{\s*\}""", "medium", "Empty catch block - errors silently swallowed"),
+    ("unhandled_promise", r"""(?:\.then\s*\((?!.*\.catch)|await\s+(?!(?:.*try)))""", "low", "Potentially unhandled promise (missing .catch or try/await)"),
+
+    # --- AI05: Overly Permissive Defaults ---
+    ("file_perm_777", r"""chmod\s+777|0o777|0777|os\.chmod.*0o?777""", "high", "File permissions set to 777 (world-writable)"),
+    ("no_rate_limit", r"""app\.(?:listen|use)|createServer""", "info", "Server created - verify rate limiting is configured"),
+    ("wildcard_allow", r"""allow_all|permit_all|public\s*=\s*true|no_auth|skip_auth""", "medium", "Permissive access pattern detected"),
+]
+
+# Prompt Injection / LLM Security Patterns
+LLM_SECURITY_PATTERNS = [
+    # --- PS01: Prompt Template Injection ---
+    ("prompt_injection_fstring", r"""(?:prompt|message|system_prompt|user_message)\s*=\s*f["\'].*\{(?:user|input|query|request|data|text|content)""", "critical", "User input directly in LLM prompt template (prompt injection vector)"),
+    ("prompt_injection_concat", r"""(?:prompt|message|system_prompt)\s*(?:\+|\.format|%\s).*(?:user_input|request\.|query|body\.)""", "critical", "User input concatenated into LLM prompt without sanitization"),
+    ("prompt_injection_template", r"""(?:ChatPromptTemplate|PromptTemplate|SystemMessage).*\{(?:user|input|query)""", "high", "LangChain/framework prompt template with user input - verify sanitization"),
+
+    # --- PS02: Insecure LLM Integration ---
+    ("llm_output_eval", r"""eval\s*\(.*(?:completion|response|output|result|generated|llm|gpt|claude|ai)""", "critical", "Evaluating LLM output as code - extremely dangerous"),
+    ("llm_output_html", r"""(?:innerHTML|dangerouslySetInnerHTML|v-html).*(?:completion|response|output|generated|llm|gpt|claude|ai)""", "critical", "Rendering LLM output as HTML - XSS via AI"),
+    ("llm_output_sql", r"""(?:execute|query|raw)\s*\(.*(?:completion|response|output|generated|llm|gpt|claude|ai)""", "critical", "Using LLM output in SQL query - injection via AI"),
+    ("llm_shell_access", r"""(?:subprocess|os\.system|exec|spawn).*(?:completion|response|output|generated|llm|gpt|claude|ai)""", "critical", "LLM output used in shell command - RCE via AI"),
+    ("system_prompt_client", r"""(?:system_prompt|SYSTEM_PROMPT|systemMessage|system_message).*(?:localStorage|sessionStorage|window\.|document\.|export\s+const|export\s+default)""", "high", "System prompt exposed in client-side code"),
+    ("no_output_validation", r"""(?:response|completion|result)\s*(?:\.choices\[0\]|\.message|\.content|\.text)\s*(?:;|\))\s*$""", "medium", "LLM output used without validation or sanitization"),
+
+    # --- PS03: RAG Security ---
+    ("untrusted_rag_source", r"""(?:add_documents|ingest|index|embed).*(?:url|http|fetch|request|user|upload)""", "medium", "RAG ingestion from potentially untrusted source"),
+
+    # --- PS04: PII in AI ---
+    ("pii_to_llm", r"""(?:openai|anthropic|llm|gpt|claude|gradient|inference).*(?:ssn|social_security|credit_card|passport|medical|health|salary|bank_account)""", "high", "Potential PII sent to LLM API without masking"),
+    ("logging_llm_pii", r"""(?:log|print|console\.log|logger).*(?:prompt|completion|response|message).*(?:password|token|key|secret|ssn|credit)""", "high", "Logging LLM interactions that may contain sensitive data"),
 ]
 
 # IPs to exclude from hardcoded IP findings
@@ -268,17 +334,32 @@ SAFE_IPS = {"127.0.0.1", "0.0.0.0", "255.255.255.255", "192.168.0.1",
             "10.0.0.0", "172.16.0.0", "224.0.0.0"}
 
 
+def _compile_patterns(pattern_list):
+    """Compile a list of (name, regex, severity, message) tuples. Returns compiled list."""
+    compiled = []
+    for entry in pattern_list:
+        name, pattern_str, severity, message = entry
+        try:
+            compiled.append((name, re.compile(pattern_str, re.IGNORECASE | re.MULTILINE), severity, message))
+        except re.error as e:
+            log(f"  WARNING: Could not compile pattern '{name}': {e}")
+    return compiled
+
+
 def layer_1_sast(repo_path: Path, language: str) -> list:
-    """Layer 1: Static Analysis Security Testing."""
-    log("[Layer 1/7] Running SAST analysis...")
+    """Layer 1: Static Analysis Security Testing - OWASP + AI Code + LLM Security."""
+    total_checks = len(OWASP_PATTERNS) + len(AI_CODE_PATTERNS) + len(LLM_SECURITY_PATTERNS)
+    log(f"[Layer 1/7] Running SAST analysis... ({total_checks}+ checks)")
     findings = []
 
-    # Run bandit for Python projects
+    # ---------------------------------------------------------------
+    # 1a. Run bandit for Python projects
+    # ---------------------------------------------------------------
     if language == "python":
         log("  Running bandit...")
         rc, stdout, stderr = _run(
             ["bandit", "-r", str(repo_path), "-f", "json", "-ll",
-             "--exclude", ".git,node_modules,__pycache__,venv,.venv"],
+             "--exclude", ".git,node_modules,__pycache__,venv,.venv,dist,build"],
             timeout=TIMEOUT_SAST,
         )
         if rc == 0 or (rc == 1 and stdout):
@@ -286,65 +367,187 @@ def layer_1_sast(repo_path: Path, language: str) -> list:
                 bandit_data = json.loads(stdout)
                 for result in bandit_data.get("results", []):
                     findings.append({
+                        "layer": "sast",
+                        "source": "bandit",
                         "file": _rel_path(Path(result.get("filename", "")), repo_path),
                         "line": result.get("line_number", 0),
                         "severity": result.get("issue_severity", "MEDIUM").lower(),
                         "rule": result.get("test_id", "unknown"),
                         "message": result.get("issue_text", ""),
+                        "category": "bandit",
                     })
             except json.JSONDecodeError:
                 log("  bandit output was not valid JSON")
         else:
             log(f"  bandit returned rc={rc}: {stderr[:200]}")
 
-    # Regex-based scanning for all languages
-    log("  Running regex-based pattern scanning...")
-    compiled_patterns = []
-    for pattern_str, severity, rule, message in SAST_PATTERNS:
-        try:
-            compiled_patterns.append((re.compile(pattern_str, re.IGNORECASE), severity, rule, message))
-        except re.error:
-            pass
+    # ---------------------------------------------------------------
+    # 1b. Compile all regex pattern sets once
+    # ---------------------------------------------------------------
+    log("  Compiling pattern sets...")
+    compiled_owasp = _compile_patterns(OWASP_PATTERNS)
+    compiled_ai = _compile_patterns(AI_CODE_PATTERNS)
+    compiled_llm = _compile_patterns(LLM_SECURITY_PATTERNS)
 
+    all_compiled = (
+        [(name, regex, sev, msg, "owasp") for name, regex, sev, msg in compiled_owasp]
+        + [(name, regex, sev, msg, "ai_code") for name, regex, sev, msg in compiled_ai]
+        + [(name, regex, sev, msg, "llm_security") for name, regex, sev, msg in compiled_llm]
+    )
+
+    # ---------------------------------------------------------------
+    # 1c. Scan all files against all patterns
+    # ---------------------------------------------------------------
+    log("  Scanning files against all pattern sets...")
+    file_count = 0
     for fpath in _iter_repo_files(repo_path):
         content = _read_file_safe(fpath)
         if not content:
             continue
 
-        for line_num, line in enumerate(content.split("\n"), start=1):
-            for regex, severity, rule, message in compiled_patterns:
-                if regex.search(line):
-                    # Filter out safe IPs
-                    if rule == "hardcoded-ip":
-                        ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', line)
-                        if ip_match and ip_match.group() in SAFE_IPS:
-                            continue
-                        # Skip version-like patterns (e.g., 1.2.3.4 in package versions)
-                        if re.search(r'version|ver\b|v\d', line, re.IGNORECASE):
+        file_count += 1
+        rel = _rel_path(fpath, repo_path)
+
+        # For multiline patterns, scan the whole file content
+        for name, regex, severity, message, category in all_compiled:
+            try:
+                for match in regex.finditer(content):
+                    # Calculate line number from match position
+                    line_num = content[:match.start()].count("\n") + 1
+
+                    # Filter out safe IPs for hardcoded-ip style rules
+                    if "hardcoded_ip" in name:
+                        ip_text = match.group(0)
+                        if any(safe in ip_text for safe in SAFE_IPS):
                             continue
 
                     findings.append({
-                        "file": _rel_path(fpath, repo_path),
+                        "layer": "sast",
+                        "source": "pattern",
+                        "file": rel,
                         "line": line_num,
                         "severity": severity,
-                        "rule": rule,
+                        "rule": name,
                         "message": message,
+                        "category": category,
                     })
+            except Exception:
+                # Individual pattern failures should not stop the scan
+                continue
 
-    log(f"  SAST complete: {len(findings)} findings")
+    log(f"  SAST complete: scanned {file_count} files, {len(findings)} findings")
     return findings
 
 
 # ---------------------------------------------------------------------------
-# Layer 2: SCA (Software Composition Analysis)
+# Layer 2: SCA (Software Composition Analysis) + Hallucinated Dep Detection
 # ---------------------------------------------------------------------------
 
+def _check_package_exists_pypi(pkg_name: str) -> bool:
+    """Check if a Python package exists on PyPI / is installed."""
+    rc, stdout, stderr = _run(
+        [sys.executable, "-m", "pip", "index", "versions", pkg_name],
+        timeout=TIMEOUT_PKG_CHECK, cwd="/tmp",
+    )
+    if rc == 0 and stdout.strip():
+        return True
+    # Fallback: pip show
+    rc2, stdout2, stderr2 = _run(
+        [sys.executable, "-m", "pip", "show", pkg_name],
+        timeout=TIMEOUT_PKG_CHECK, cwd="/tmp",
+    )
+    return rc2 == 0 and "Name:" in stdout2
+
+
+def _check_package_exists_npm(pkg_name: str) -> bool:
+    """Check if an npm package exists in the registry."""
+    rc, stdout, stderr = _run(
+        ["npm", "view", pkg_name, "version"],
+        timeout=TIMEOUT_PKG_CHECK, cwd="/tmp",
+    )
+    return rc == 0 and stdout.strip() != ""
+
+
+def _extract_python_imports(repo_path: Path) -> list:
+    """Extract all imported package names from Python files."""
+    imports = set()
+    stdlib_modules = {
+        "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio",
+        "asyncore", "atexit", "audioop", "base64", "bdb", "binascii",
+        "binhex", "bisect", "builtins", "bz2", "calendar", "cgi", "cgitb",
+        "chunk", "cmath", "cmd", "code", "codecs", "codeop", "collections",
+        "colorsys", "compileall", "concurrent", "configparser", "contextlib",
+        "contextvars", "copy", "copyreg", "cProfile", "crypt", "csv",
+        "ctypes", "curses", "dataclasses", "datetime", "dbm", "decimal",
+        "difflib", "dis", "distutils", "doctest", "email", "encodings",
+        "enum", "errno", "faulthandler", "fcntl", "filecmp", "fileinput",
+        "fnmatch", "fractions", "ftplib", "functools", "gc", "getopt",
+        "getpass", "gettext", "glob", "grp", "gzip", "hashlib", "heapq",
+        "hmac", "html", "http", "idlelib", "imaplib", "imghdr", "imp",
+        "importlib", "inspect", "io", "ipaddress", "itertools", "json",
+        "keyword", "lib2to3", "linecache", "locale", "logging", "lzma",
+        "mailbox", "mailcap", "marshal", "math", "mimetypes", "mmap",
+        "modulefinder", "multiprocessing", "netrc", "nis", "nntplib",
+        "numbers", "operator", "optparse", "os", "ossaudiodev",
+        "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
+        "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
+        "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+        "pydoc", "queue", "quopri", "random", "re", "readline", "reprlib",
+        "resource", "rlcompleter", "runpy", "sched", "secrets", "select",
+        "selectors", "shelve", "shlex", "shutil", "signal", "site",
+        "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "sqlite3",
+        "ssl", "stat", "statistics", "string", "stringprep", "struct",
+        "subprocess", "sunau", "symtable", "sys", "sysconfig", "syslog",
+        "tabnanny", "tarfile", "telnetlib", "tempfile", "termios", "test",
+        "textwrap", "threading", "time", "timeit", "tkinter", "token",
+        "tokenize", "tomllib", "trace", "traceback", "tracemalloc",
+        "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
+        "unittest", "urllib", "uu", "uuid", "venv", "warnings", "wave",
+        "weakref", "webbrowser", "winreg", "winsound", "wsgiref",
+        "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport",
+        "zlib", "_thread",
+    }
+
+    import_re = re.compile(r'(?:^|\n)\s*(?:from\s+(\S+)\s+import|import\s+(\S+))')
+
+    for fpath in _iter_repo_files(repo_path):
+        if fpath.suffix != ".py":
+            continue
+        content = _read_file_safe(fpath)
+        for match in import_re.finditer(content):
+            pkg = match.group(1) or match.group(2)
+            if pkg:
+                top_level = pkg.split(".")[0]
+                if top_level not in stdlib_modules and not top_level.startswith("_"):
+                    imports.add(top_level)
+
+    return sorted(imports)
+
+
+def _extract_js_dependencies(repo_path: Path) -> list:
+    """Extract dependencies from package.json."""
+    deps = []
+    pkg_json = repo_path / "package.json"
+    if pkg_json.exists():
+        try:
+            data = json.loads(_read_file_safe(pkg_json))
+            for dep_name in data.get("dependencies", {}):
+                deps.append(dep_name)
+            for dep_name in data.get("devDependencies", {}):
+                deps.append(dep_name)
+        except json.JSONDecodeError:
+            pass
+    return deps
+
+
 def layer_2_sca(repo_path: Path, language: str) -> list:
-    """Layer 2: Software Composition Analysis - known vulnerabilities in deps."""
+    """Layer 2: Software Composition Analysis + hallucinated dependency detection."""
     log("[Layer 2/7] Running SCA analysis...")
     findings = []
 
-    # Python: pip-audit
+    # ------------------------------------------------------------------
+    # 2a. Python: pip-audit
+    # ------------------------------------------------------------------
     if language == "python":
         requirements_files = []
         for name in ["requirements.txt", "requirements-dev.txt", "requirements-test.txt"]:
@@ -366,21 +569,25 @@ def layer_2_sca(repo_path: Path, language: str) -> list:
                         vulns = dep.get("vulns", [])
                         for vuln in vulns:
                             findings.append({
+                                "layer": "sca",
+                                "source": "pip-audit",
                                 "package": dep.get("name", "unknown"),
                                 "version": dep.get("version", "unknown"),
                                 "vulnerability": vuln.get("id", "unknown"),
-                                "severity": vuln.get("fix_versions", ["unknown"])[0] if vuln.get("fix_versions") else "unknown",
+                                "severity": "high",
                                 "fix_version": ", ".join(vuln.get("fix_versions", [])) or "no fix available",
                             })
                 except json.JSONDecodeError:
                     log(f"  pip-audit output was not valid JSON for {req_file.name}")
 
-        # Also check pyproject.toml, setup.py, setup.cfg existence
+        # Also note additional dependency sources
         for manifest in ["pyproject.toml", "setup.py", "setup.cfg", "Pipfile"]:
             if (repo_path / manifest).exists():
                 log(f"  Detected {manifest} (additional dependency source)")
 
-    # JavaScript: npm audit
+    # ------------------------------------------------------------------
+    # 2b. JavaScript: npm audit
+    # ------------------------------------------------------------------
     if language in ("javascript", "typescript") or (repo_path / "package.json").exists():
         if (repo_path / "package.json").exists():
             log("  Running npm audit...")
@@ -405,30 +612,109 @@ def layer_2_sca(repo_path: Path, language: str) -> list:
                     # npm audit v2+ format (npm 7+)
                     vulns = audit_data.get("vulnerabilities", {})
                     for pkg_name, vuln_info in vulns.items():
+                        via = vuln_info.get("via", [{}])
+                        first_via = via[0] if via else {}
+                        vuln_title = (
+                            first_via.get("title", "unknown")
+                            if isinstance(first_via, dict)
+                            else str(first_via)
+                        )
+                        fix_avail = vuln_info.get("fixAvailable", {})
+                        fix_ver = (
+                            fix_avail.get("version", "unknown")
+                            if isinstance(fix_avail, dict)
+                            else "unknown"
+                        )
                         findings.append({
+                            "layer": "sca",
+                            "source": "npm-audit",
                             "package": pkg_name,
                             "version": vuln_info.get("range", "unknown"),
-                            "vulnerability": vuln_info.get("via", [{}])[0].get("title", "unknown")
-                                if isinstance(vuln_info.get("via", [{}])[0], dict)
-                                else str(vuln_info.get("via", ["unknown"])[0]),
+                            "vulnerability": vuln_title,
                             "severity": vuln_info.get("severity", "unknown"),
-                            "fix_version": vuln_info.get("fixAvailable", {}).get("version", "unknown")
-                                if isinstance(vuln_info.get("fixAvailable"), dict) else "unknown",
+                            "fix_version": fix_ver,
                         })
 
                     # npm audit v1 format (fallback)
                     if not vulns and "advisories" in audit_data:
                         for adv_id, advisory in audit_data["advisories"].items():
+                            adv_findings = advisory.get("findings", [{}])
+                            adv_ver = adv_findings[0].get("version", "unknown") if adv_findings else "unknown"
                             findings.append({
+                                "layer": "sca",
+                                "source": "npm-audit",
                                 "package": advisory.get("module_name", "unknown"),
-                                "version": advisory.get("findings", [{}])[0].get("version", "unknown")
-                                    if advisory.get("findings") else "unknown",
+                                "version": adv_ver,
                                 "vulnerability": advisory.get("title", "unknown"),
                                 "severity": advisory.get("severity", "unknown"),
                                 "fix_version": advisory.get("patched_versions", "unknown"),
                             })
                 except json.JSONDecodeError:
                     log("  npm audit output was not valid JSON")
+
+    # ------------------------------------------------------------------
+    # 2c. Hallucinated package detection (slopsquatting)
+    # ------------------------------------------------------------------
+    log("  Checking for hallucinated dependencies...")
+    hallucinated_count = 0
+
+    if language == "python":
+        py_imports = _extract_python_imports(repo_path)
+        # Only check imports that are NOT in requirements files (likely hallucinated)
+        req_packages = set()
+        for name in ["requirements.txt", "requirements-dev.txt", "requirements-test.txt"]:
+            rpath = repo_path / name
+            if rpath.exists():
+                content = _read_file_safe(rpath)
+                for line in content.split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("#") and not line.startswith("-"):
+                        pkg = re.split(r'[><=!~\[]', line)[0].strip().replace("-", "_").lower()
+                        req_packages.add(pkg)
+
+        # Check each import that is NOT a local module
+        local_modules = set()
+        for fpath in _iter_repo_files(repo_path):
+            if fpath.suffix == ".py":
+                local_modules.add(fpath.stem)
+                for parent in fpath.relative_to(repo_path).parents:
+                    if str(parent) != ".":
+                        local_modules.add(str(parent).split("/")[0].split("\\")[0])
+
+        for imp in py_imports:
+            normalized = imp.replace("-", "_").lower()
+            if normalized in local_modules:
+                continue
+            if normalized in req_packages:
+                continue
+            # Check if it exists on PyPI
+            if not _check_package_exists_pypi(imp):
+                hallucinated_count += 1
+                findings.append({
+                    "layer": "sca",
+                    "source": "hallucination-check",
+                    "package": imp,
+                    "severity": "critical",
+                    "vulnerability": f"HALLUCINATED DEPENDENCY: Package '{imp}' not found on PyPI (slopsquatting risk)",
+                    "fix_version": "Remove or replace with a real package",
+                })
+
+    if language in ("javascript", "typescript"):
+        js_deps = _extract_js_dependencies(repo_path)
+        for dep in js_deps:
+            if not _check_package_exists_npm(dep):
+                hallucinated_count += 1
+                findings.append({
+                    "layer": "sca",
+                    "source": "hallucination-check",
+                    "package": dep,
+                    "severity": "critical",
+                    "vulnerability": f"HALLUCINATED DEPENDENCY: Package '{dep}' not found on npm (slopsquatting risk)",
+                    "fix_version": "Remove or replace with a real package",
+                })
+
+    if hallucinated_count > 0:
+        log(f"  WARNING: {hallucinated_count} potentially hallucinated package(s) detected!")
 
     log(f"  SCA complete: {len(findings)} findings")
     return findings
@@ -443,23 +729,46 @@ SECRET_PATTERNS = [
     (r'AKIA[0-9A-Z]{16}', "aws-access-key", "AWS Access Key ID"),
     (r'(?:aws_secret|secret_key|AWS_SECRET)\s*[=:]\s*["\']?([A-Za-z0-9/+=]{40})["\']?', "aws-secret-key", "AWS Secret Access Key"),
 
+    # GCP
+    (r'AIza[0-9A-Za-z\-_]{35}', "gcp-api-key", "Google Cloud API key"),
+    (r'"type"\s*:\s*"service_account"', "gcp-service-account", "GCP service account JSON"),
+
+    # Azure
+    (r'(?:AccountKey|SharedAccessKey)\s*=\s*([A-Za-z0-9+/=]{44,})', "azure-key", "Azure storage/shared access key"),
+
     # Generic API keys / secrets / tokens
-    (r"""["\'](?:api[_\-]?key|apikey|token|secret|password|auth)["\'][\s]*[:=][\s]*["\']([^"\']{8,})["\']""", "generic-api-key", "Generic API key or secret"),
+    (r'["\'](?:api[_\-]?key|apikey|token|secret|password|auth)["\']\s*[:=]\s*["\']([^"\']{8,})["\']', "generic-api-key", "Generic API key or secret"),
 
     # Private keys
-    (r'-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----', "private-key", "Private key file"),
+    (r'-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', "private-key", "Private key file"),
 
     # GitHub tokens
     (r'gh[ps]_[A-Za-z0-9_]{36,}', "github-token", "GitHub personal access token"),
+    (r'github_pat_[A-Za-z0-9_]{22,}', "github-fine-grained-token", "GitHub fine-grained PAT"),
 
     # Slack tokens
     (r'xox[baprs]-[0-9a-zA-Z\-]+', "slack-token", "Slack API token"),
 
+    # Stripe
+    (r'(?:sk|pk)_(?:live|test)_[0-9a-zA-Z]{24,}', "stripe-key", "Stripe API key"),
+
     # JWT tokens
     (r'eyJ[A-Za-z0-9_\-]*\.eyJ[A-Za-z0-9_\-]*\.[A-Za-z0-9_\-]*', "jwt-token", "JWT token"),
 
-    # Generic high-entropy strings that look like secrets (base64-ish, 32+ chars, assigned to suspicious vars)
+    # SendGrid
+    (r'SG\.[A-Za-z0-9_\-]{22,}\.[A-Za-z0-9_\-]{43,}', "sendgrid-key", "SendGrid API key"),
+
+    # Twilio
+    (r'SK[0-9a-fA-F]{32}', "twilio-key", "Twilio API key"),
+
+    # Database connection strings with credentials
+    (r'(?:mongodb|postgres|mysql|redis)://[^:]+:[^@]+@', "db-connection-string", "Database connection string with embedded credentials"),
+
+    # Generic high-entropy strings assigned to suspicious variable names
     (r'(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY)\s*[=:]\s*["\']([A-Za-z0-9+/=_\-]{32,})["\']', "generic-secret", "Potential secret in variable assignment"),
+
+    # Passwords in URLs
+    (r'https?://[^:]+:[^@]+@(?!localhost|127\.0\.0\.1)', "password-in-url", "Password embedded in URL"),
 ]
 
 
@@ -476,6 +785,9 @@ def layer_3_secrets(repo_path: Path) -> list:
             pass
 
     for fpath in _iter_repo_files(repo_path):
+        # Skip certain file types that commonly have false positives
+        if fpath.suffix in (".lock", ".sum"):
+            continue
         content = _read_file_safe(fpath)
         if not content:
             continue
@@ -484,11 +796,12 @@ def layer_3_secrets(repo_path: Path) -> list:
             for regex, secret_type, description in compiled_patterns:
                 match = regex.search(line)
                 if match:
-                    # Extract the secret value for redaction
+                    # Extract the secret value for redaction - NEVER include actual secret
                     secret_value = match.group(1) if match.lastindex and match.lastindex >= 1 else match.group(0)
                     redacted = _redact_secret(secret_value)
 
                     findings.append({
+                        "layer": "secrets",
                         "file": _rel_path(fpath, repo_path),
                         "line": line_num,
                         "type": secret_type,
@@ -507,22 +820,24 @@ def layer_3_secrets(repo_path: Path) -> list:
 
         if not env_ignored:
             findings.append({
+                "layer": "secrets",
                 "file": ".env",
                 "line": 0,
                 "type": "committed-env-file",
-                "description": ".env file is committed and not in .gitignore",
-                "snippet": "(entire file)",
+                "description": ".env file is committed and not in .gitignore - CRITICAL",
+                "snippet": "(entire file - secrets redacted)",
             })
 
     # Also check for other env-like files
     for env_name in [".env.local", ".env.production", ".env.development", ".env.staging"]:
         if (repo_path / env_name).exists():
             findings.append({
+                "layer": "secrets",
                 "file": env_name,
                 "line": 0,
                 "type": "committed-env-file",
                 "description": f"{env_name} file found in repository",
-                "snippet": "(entire file)",
+                "snippet": "(entire file - secrets redacted)",
             })
 
     log(f"  Secret detection complete: {len(findings)} findings")
@@ -533,12 +848,13 @@ def layer_3_secrets(repo_path: Path) -> list:
 # Layer 4: License Compliance
 # ---------------------------------------------------------------------------
 
-# Licenses that may cause issues when mixed
 COPYLEFT_LICENSES = {"gpl", "agpl", "lgpl", "gpl-2.0", "gpl-3.0",
                      "agpl-3.0", "lgpl-2.1", "lgpl-3.0", "gpl-2.0-only",
-                     "gpl-3.0-only", "agpl-3.0-only"}
+                     "gpl-3.0-only", "agpl-3.0-only", "eupl",
+                     "osl-3.0", "cecill"}
 PERMISSIVE_LICENSES = {"mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause",
-                       "isc", "0bsd", "unlicense", "cc0-1.0", "wtfpl"}
+                       "isc", "0bsd", "unlicense", "cc0-1.0", "wtfpl",
+                       "zlib", "artistic-2.0"}
 
 
 def _classify_license(license_str: str) -> str:
@@ -557,7 +873,6 @@ def _classify_license(license_str: str) -> str:
 
 def _get_project_license(repo_path: Path) -> str:
     """Detect the project's own license."""
-    # Check LICENSE file
     for name in ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md"]:
         lpath = repo_path / name
         if lpath.exists():
@@ -568,10 +883,10 @@ def _get_project_license(repo_path: Path) -> str:
                 return "Apache-2.0"
             if "bsd" in content:
                 return "BSD"
-            if "gpl" in content or "gnu general public" in content:
-                return "GPL"
             if "agpl" in content:
                 return "AGPL"
+            if "gpl" in content or "gnu general public" in content:
+                return "GPL"
             return "detected (unknown type)"
 
     # Check package.json
@@ -582,6 +897,14 @@ def _get_project_license(repo_path: Path) -> str:
             return data.get("license", "")
         except json.JSONDecodeError:
             pass
+
+    # Check pyproject.toml
+    pyproject = repo_path / "pyproject.toml"
+    if pyproject.exists():
+        content = _read_file_safe(pyproject)
+        license_match = re.search(r'license\s*=\s*["\']([^"\']+)["\']', content)
+        if license_match:
+            return license_match.group(1)
 
     return ""
 
@@ -604,7 +927,6 @@ def layer_4_licenses(repo_path: Path, language: str) -> list:
                 line = line.strip()
                 if not line or line.startswith("#") or line.startswith("-"):
                     continue
-                # Extract package name (before ==, >=, etc.)
                 pkg_name = re.split(r'[><=!~\[]', line)[0].strip()
                 if not pkg_name:
                     continue
@@ -638,6 +960,7 @@ def layer_4_licenses(repo_path: Path, language: str) -> list:
                     reason = "Could not determine package license"
 
                 findings.append({
+                    "layer": "licenses",
                     "package": pkg_name,
                     "license": pkg_license or "unknown",
                     "status": status,
@@ -656,7 +979,6 @@ def layer_4_licenses(repo_path: Path, language: str) -> list:
 
                 for pkg_name, version in all_deps.items():
                     pkg_license = ""
-                    # Try to read from node_modules
                     nm_pkg_json = repo_path / "node_modules" / pkg_name / "package.json"
                     if nm_pkg_json.exists():
                         try:
@@ -685,6 +1007,7 @@ def layer_4_licenses(repo_path: Path, language: str) -> list:
                         reason = f"Unknown license type: {pkg_license}"
 
                     findings.append({
+                        "layer": "licenses",
                         "package": pkg_name,
                         "license": pkg_license or "unknown",
                         "status": status,
@@ -711,6 +1034,7 @@ def layer_5_tests(repo_path: Path, language: str) -> dict:
         "estimated_tests": 0,
         "has_coverage_config": False,
         "has_ci": False,
+        "ci_runs_tests": False,
     }
 
     test_files = []
@@ -743,7 +1067,6 @@ def layer_5_tests(repo_path: Path, language: str) -> dict:
                 timeout=TIMEOUT_TESTS,
             )
             if rc == 0 and stdout.strip():
-                # Last line is usually "X tests collected" or similar
                 lines = [l for l in stdout.strip().split("\n") if l.strip()]
                 if lines:
                     last = lines[-1]
@@ -751,7 +1074,6 @@ def layer_5_tests(repo_path: Path, language: str) -> dict:
                     if match:
                         result["estimated_tests"] = int(match.group(1))
                     else:
-                        # Count non-empty lines (each is a test)
                         result["estimated_tests"] = len([l for l in lines if "::" in l])
 
         # Check for coverage config
@@ -815,13 +1137,12 @@ def layer_5_tests(repo_path: Path, language: str) -> dict:
                     result["test_framework"] = cfg.split(".")[0]
                 break
 
-        # Count test cases via grep
+        # Count test cases via regex
         if test_files:
             log("  Counting JavaScript/TypeScript test cases...")
             count = 0
             for tf in test_files:
                 content = _read_file_safe(tf)
-                # Count describe/it/test blocks
                 count += len(re.findall(r'\b(?:it|test)\s*\(', content))
             result["estimated_tests"] = count
 
@@ -846,7 +1167,6 @@ def layer_5_tests(repo_path: Path, language: str) -> dict:
     for ci_path in ci_paths:
         if ci_path.exists():
             result["has_ci"] = True
-            # Check if CI runs tests
             if ci_path.is_dir():
                 for wf in ci_path.iterdir():
                     content = _read_file_safe(wf)
@@ -865,7 +1185,7 @@ def layer_5_tests(repo_path: Path, language: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Layer 6: Repository Health & Structure
+# Layer 6: Repository Health & Structure (EXPANDED)
 # ---------------------------------------------------------------------------
 
 def layer_6_repo_health(repo_path: Path, language: str) -> dict:
@@ -918,6 +1238,16 @@ def layer_6_repo_health(repo_path: Path, language: str) -> dict:
         "details": "Security policy found" if security_exists else "No SECURITY.md - consider adding a vulnerability disclosure policy",
     })
 
+    # .env.example (good practice)
+    env_example_exists = any((repo_path / name).exists()
+                              for name in [".env.example", ".env.sample", ".env.template"])
+    checks.append({
+        "name": ".env.example",
+        "status": "pass" if env_example_exists else "info",
+        "details": ".env.example found (good practice)" if env_example_exists
+                   else "No .env.example - consider adding one to document required environment variables",
+    })
+
     # Dependency lockfile
     lockfiles = {
         "package-lock.json": "npm",
@@ -942,16 +1272,128 @@ def layer_6_repo_health(repo_path: Path, language: str) -> dict:
                    else "No dependency lockfile - builds may be non-deterministic",
     })
 
+    # Input validation library
+    validation_libs = {
+        "python": ["pydantic", "marshmallow", "cerberus", "wtforms", "voluptuous"],
+        "javascript": ["joi", "zod", "yup", "express-validator", "celebrate", "ajv", "class-validator"],
+    }
+    has_validation_lib = False
+    target_lang = "javascript" if language in ("javascript", "typescript") else language
+    if target_lang in validation_libs:
+        if target_lang == "python":
+            for req_name in ["requirements.txt", "requirements-dev.txt", "pyproject.toml"]:
+                req_path = repo_path / req_name
+                if req_path.exists():
+                    content = _read_file_safe(req_path).lower()
+                    for lib in validation_libs["python"]:
+                        if lib in content:
+                            has_validation_lib = True
+                            break
+                if has_validation_lib:
+                    break
+        elif target_lang == "javascript":
+            pkg_json_path = repo_path / "package.json"
+            if pkg_json_path.exists():
+                content = _read_file_safe(pkg_json_path).lower()
+                for lib in validation_libs["javascript"]:
+                    if lib in content:
+                        has_validation_lib = True
+                        break
+
+    checks.append({
+        "name": "Input Validation Library",
+        "status": "pass" if has_validation_lib else "warning",
+        "details": "Input validation library detected" if has_validation_lib
+                   else "No input validation library found - strongly recommended for API projects",
+    })
+
+    # Rate limiting configuration
+    has_rate_limiting = False
+    rate_limit_indicators = [
+        "express-rate-limit", "rate-limit", "ratelimit", "throttle",
+        "slowapi", "flask-limiter", "django-ratelimit",
+    ]
+    for fpath in _iter_repo_files(repo_path):
+        if fpath.name in ("package.json", "requirements.txt", "pyproject.toml"):
+            content = _read_file_safe(fpath).lower()
+            for indicator in rate_limit_indicators:
+                if indicator in content:
+                    has_rate_limiting = True
+                    break
+        if has_rate_limiting:
+            break
+
+    checks.append({
+        "name": "Rate Limiting",
+        "status": "pass" if has_rate_limiting else "warning",
+        "details": "Rate limiting library detected" if has_rate_limiting
+                   else "No rate limiting library found - recommended for public-facing APIs",
+    })
+
+    # Authentication middleware
+    has_auth = False
+    auth_indicators = [
+        "passport", "jsonwebtoken", "jwt", "express-jwt", "auth0",
+        "flask-login", "flask-jwt", "django-auth", "python-jose",
+        "authlib", "oauth", "firebase-admin", "next-auth",
+        "clerk", "supabase", "lucia",
+    ]
+    for fpath in _iter_repo_files(repo_path):
+        if fpath.name in ("package.json", "requirements.txt", "pyproject.toml"):
+            content = _read_file_safe(fpath).lower()
+            for indicator in auth_indicators:
+                if indicator in content:
+                    has_auth = True
+                    break
+        if has_auth:
+            break
+
+    checks.append({
+        "name": "Authentication",
+        "status": "pass" if has_auth else "info",
+        "details": "Authentication library detected" if has_auth
+                   else "No authentication library detected - may not be needed for all projects",
+    })
+
+    # HTTPS/TLS configuration
+    has_tls = False
+    tls_indicators = ["https", "ssl", "tls", "cert", "certificate"]
+    for cfg_name in ["docker-compose.yml", "docker-compose.yaml", "nginx.conf",
+                     "Caddyfile", "traefik.yml", "traefik.yaml"]:
+        cfg_path = repo_path / cfg_name
+        if cfg_path.exists():
+            content = _read_file_safe(cfg_path).lower()
+            for indicator in tls_indicators:
+                if indicator in content:
+                    has_tls = True
+                    break
+        if has_tls:
+            break
+
+    checks.append({
+        "name": "HTTPS/TLS",
+        "status": "pass" if has_tls else "info",
+        "details": "TLS/HTTPS configuration detected" if has_tls
+                   else "No explicit HTTPS/TLS configuration found - may be handled by hosting provider",
+    })
+
     # Dockerfile analysis
     dockerfile = repo_path / "Dockerfile"
     if dockerfile.exists():
         df_content = _read_file_safe(dockerfile)
         has_user = bool(re.search(r'^USER\s+\S+', df_content, re.MULTILINE))
+        has_healthcheck = bool(re.search(r'^HEALTHCHECK\s', df_content, re.MULTILINE))
+        issues = []
+        if not has_user:
+            issues.append("no USER directive (runs as root)")
+        if not has_healthcheck:
+            issues.append("no HEALTHCHECK")
+        status = "pass" if not issues else "warning"
+        details = "Dockerfile security OK" if not issues else f"Dockerfile issues: {', '.join(issues)}"
         checks.append({
             "name": "Dockerfile Security",
-            "status": "pass" if has_user else "warning",
-            "details": "Dockerfile has USER directive (non-root)" if has_user
-                       else "Dockerfile exists but no USER directive - container runs as root",
+            "status": status,
+            "details": details,
         })
     else:
         checks.append({
@@ -1030,25 +1472,37 @@ def layer_6_repo_health(repo_path: Path, language: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Layer 7: AI Synthesis (Gradient AI)
+# Layer 7: AI Synthesis (Gradient AI) - UPDATED PROMPT
 # ---------------------------------------------------------------------------
 
 AI_SYNTHESIS_SYSTEM_PROMPT = """\
-You are a senior application security engineer performing a comprehensive code audit.
-You have been given findings from 6 automated analysis layers. Your job is to:
+You are a senior application security engineer specializing in AI-generated code security.
+You are reviewing findings from a 7-layer security audit. This audit specifically targets
+vulnerabilities common in code written by AI assistants (Claude, Cursor, Copilot).
 
-1. PRIORITIZE findings by actual exploitability and business risk (not just CVSS scores)
-2. GROUP findings by severity: Critical, High, Medium, Low, Informational
-3. CROSS-REFERENCE findings across layers:
-   - A dependency CVE in code with no test coverage = escalate to Critical
-   - A hardcoded secret in a file with no .gitignore protection = Critical
-   - A missing lockfile + known vulnerable deps = High
-4. For each Critical/High finding, provide:
-   - Plain English explanation of the risk
+Your analysis MUST include:
+
+1. EXECUTIVE SUMMARY (3-4 sentences for non-technical stakeholders)
+2. RISK SCORE (0-100, where 0=perfect, 100=critical risk)
+3. AI CODE SAFETY SECTION - specifically call out:
+   - Prompt injection vulnerabilities
+   - Hallucinated/suspicious dependencies
+   - Missing input validation (the #1 AI code flaw)
+   - AI-specific anti-patterns found
+4. FINDINGS BY SEVERITY (Critical/High/Medium/Low/Info)
+   For each Critical/High finding:
+   - Plain English explanation
+   - Why AI generates this pattern
    - Specific remediation steps
-   - Code example of the fix if applicable
-5. Generate an EXECUTIVE SUMMARY (3-4 sentences) for non-technical stakeholders
-6. Generate a RISK SCORE from 0-100 (0=perfect, 100=critical risk)
+   - Code example of the fix
+5. CROSS-LAYER INSIGHTS
+   - A dependency CVE in untested code = escalate to Critical
+   - A secret in a file without .gitignore protection = Critical
+   - Prompt injection + no output validation = Critical chain
+6. SUPPLY CHAIN ASSESSMENT
+   - Any hallucinated packages?
+   - License risks?
+   - Outdated dependencies?
 
 Output your analysis as a structured markdown report.
 """
@@ -1066,12 +1520,13 @@ def layer_7_ai_synthesis(findings: dict, gradient_key: str, model: str) -> str:
     findings_json = json.dumps(findings, indent=2, default=str)
 
     # Truncate if too large (reserve room for system prompt + response)
-    max_findings_chars = 12000
+    max_findings_chars = 14000
     if len(findings_json) > max_findings_chars:
         findings_json = findings_json[:max_findings_chars] + "\n... (truncated)"
 
     user_message = (
-        "Here are the findings from all 6 automated analysis layers for a code repository audit. "
+        "Here are the findings from all 7 automated analysis layers for a code repository audit. "
+        "This audit specifically targets AI-generated code patterns. "
         "Please analyze, cross-reference, and produce your comprehensive security report.\n\n"
         f"```json\n{findings_json}\n```"
     )
@@ -1120,9 +1575,10 @@ def _build_full_report(findings: dict, ai_report: str) -> str:
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
     sections = [
-        f"# CodeScope 7-Layer Security Audit Report",
+        f"# CodeScope: AI-Era Security Audit Report",
         f"",
         f"**Generated:** {timestamp}",
+        f"**Engine:** CodeScope 7-Layer AI Security Audit",
         f"",
         f"---",
         f"",
@@ -1145,10 +1601,25 @@ def _build_full_report(findings: dict, ai_report: str) -> str:
     sections.append(f"### Layer 1: SAST ({len(sast)} findings)")
     if sast:
         by_severity = {}
+        by_category = {}
         for f in sast:
             sev = f.get("severity", "unknown")
             by_severity[sev] = by_severity.get(sev, 0) + 1
-        sections.append(f"Breakdown: {', '.join(f'{k}: {v}' for k, v in sorted(by_severity.items()))}")
+            cat = f.get("category", "unknown")
+            by_category[cat] = by_category.get(cat, 0) + 1
+        sections.append(f"**By severity:** {', '.join(f'{k}: {v}' for k, v in sorted(by_severity.items()))}")
+        sections.append(f"**By category:** {', '.join(f'{k}: {v}' for k, v in sorted(by_category.items()))}")
+
+        # Show critical and high findings
+        critical_high = [f for f in sast if f.get("severity") in ("critical", "high")]
+        if critical_high:
+            sections.append("")
+            sections.append("**Critical/High findings:**")
+            for f in critical_high[:15]:
+                sections.append(f"- [{f.get('severity').upper()}] `{f.get('file')}` L{f.get('line')}: "
+                              f"{f.get('rule')} - {f.get('message')}")
+            if len(critical_high) > 15:
+                sections.append(f"- ... and {len(critical_high) - 15} more critical/high findings")
     else:
         sections.append("No SAST findings.")
     sections.append("")
@@ -1157,11 +1628,23 @@ def _build_full_report(findings: dict, ai_report: str) -> str:
     sca = findings.get("sca", [])
     sections.append(f"### Layer 2: SCA ({len(sca)} findings)")
     if sca:
-        for f in sca[:10]:  # Limit display
-            sections.append(f"- **{f.get('package')}** {f.get('version')}: "
-                          f"{f.get('vulnerability')} (fix: {f.get('fix_version')})")
-        if len(sca) > 10:
-            sections.append(f"- ... and {len(sca) - 10} more")
+        hallucinated = [f for f in sca if f.get("source") == "hallucination-check"]
+        vuln_deps = [f for f in sca if f.get("source") != "hallucination-check"]
+
+        if hallucinated:
+            sections.append("")
+            sections.append("**HALLUCINATED DEPENDENCIES (Slopsquatting Risk):**")
+            for f in hallucinated:
+                sections.append(f"- CRITICAL: `{f.get('package')}` - {f.get('vulnerability')}")
+
+        if vuln_deps:
+            sections.append("")
+            sections.append("**Vulnerable Dependencies:**")
+            for f in vuln_deps[:10]:
+                sections.append(f"- **{f.get('package')}** {f.get('version')}: "
+                              f"{f.get('vulnerability')} (fix: {f.get('fix_version')})")
+            if len(vuln_deps) > 10:
+                sections.append(f"- ... and {len(vuln_deps) - 10} more")
     else:
         sections.append("No known vulnerable dependencies found.")
     sections.append("")
@@ -1206,6 +1689,7 @@ def _build_full_report(findings: dict, ai_report: str) -> str:
     sections.append(f"- Estimated tests: {tests.get('estimated_tests', 0)}")
     sections.append(f"- Coverage config: {'Yes' if tests.get('has_coverage_config') else 'No'}")
     sections.append(f"- CI configured: {'Yes' if tests.get('has_ci') else 'No'}")
+    sections.append(f"- CI runs tests: {'Yes' if tests.get('ci_runs_tests') else 'No'}")
     sections.append("")
 
     # Layer 6: Repo Health
@@ -1226,16 +1710,13 @@ def _build_full_report(findings: dict, ai_report: str) -> str:
 
     sections.append("---")
     sections.append("")
-    sections.append("*Report generated by CodeScope 7-Layer Security Audit*")
+    sections.append("*Report generated by CodeScope: AI-Era Security Audit Engine*")
 
     return "\n".join(sections)
 
 
-def _generate_fallback_report(findings: dict) -> str:
-    """Generate a basic report without AI when Gradient AI is unavailable."""
-    log("  Generating fallback report (no AI synthesis)...")
-
-    # Calculate a basic risk score
+def _calculate_risk_score(findings: dict) -> int:
+    """Calculate a heuristic risk score from 0-100."""
     risk_score = 0
 
     sast = findings.get("sast", [])
@@ -1248,15 +1729,19 @@ def _generate_fallback_report(findings: dict) -> str:
     # Score from SAST
     for f in sast:
         sev = f.get("severity", "").lower()
-        if sev == "high":
-            risk_score += 5
-        elif sev == "medium":
-            risk_score += 2
-        elif sev == "low":
-            risk_score += 1
+        cat = f.get("category", "")
+        base = {"critical": 8, "high": 5, "medium": 2, "low": 1, "info": 0}.get(sev, 1)
+        # AI-specific and LLM findings get a multiplier
+        if cat in ("ai_code", "llm_security"):
+            base = int(base * 1.5)
+        risk_score += base
 
     # Score from SCA
-    risk_score += len(sca) * 8
+    for f in sca:
+        if f.get("source") == "hallucination-check":
+            risk_score += 20  # Hallucinated deps are extremely dangerous
+        else:
+            risk_score += 8
 
     # Score from secrets (high impact)
     risk_score += len(secrets) * 15
@@ -1276,20 +1761,84 @@ def _generate_fallback_report(findings: dict) -> str:
         elif check.get("status") == "warning":
             risk_score += 2
 
-    risk_score = min(100, risk_score)
+    # Cross-layer escalation: secrets without .gitignore
+    has_gitignore = False
+    for check in health.get("checks", []):
+        if check.get("name") == ".gitignore" and check.get("status") == "pass":
+            has_gitignore = True
+    if secrets and not has_gitignore:
+        risk_score += 15  # Escalate
+
+    # Cross-layer escalation: CVEs in untested code
+    if sca and tests.get("test_files", 0) == 0:
+        risk_score += 10  # Escalate
+
+    return min(100, risk_score)
+
+
+def _generate_fallback_report(findings: dict) -> str:
+    """Generate a basic report without AI when Gradient AI is unavailable."""
+    log("  Generating fallback report (no AI synthesis)...")
+
+    risk_score = _calculate_risk_score(findings)
+
+    sast = findings.get("sast", [])
+    sca = findings.get("sca", [])
+    secrets = findings.get("secrets", [])
+    licenses = findings.get("licenses", [])
+    tests = findings.get("tests", {})
+    violations = [f for f in licenses if f.get("status") == "violation"]
+
+    # Separate AI-specific findings
+    ai_sast = [f for f in sast if f.get("category") in ("ai_code", "llm_security")]
+    hallucinated = [f for f in sca if f.get("source") == "hallucination-check"]
 
     ai_section = (
         f"## AI Security Analysis\n\n"
         f"*AI synthesis was unavailable. Below is an automated summary.*\n\n"
         f"### Risk Score: {risk_score}/100\n\n"
         f"### Executive Summary\n\n"
-        f"This repository has {len(sast)} static analysis findings, "
-        f"{len(sca)} known vulnerable dependencies, "
+        f"This repository has {len(sast)} static analysis findings "
+        f"({len(ai_sast)} AI-code-specific), "
+        f"{len(sca)} dependency findings "
+        f"({len(hallucinated)} potentially hallucinated), "
         f"{len(secrets)} potential secret exposures, and "
         f"{len(violations)} license compliance violations. "
-        f"{'No test files were detected, increasing overall risk.' if tests.get('test_files', 0) == 0 else str(tests.get('test_files', 0)) + ' test files were found.'}\n\n"
-        f"### Critical Findings\n\n"
     )
+
+    if tests.get("test_files", 0) == 0:
+        ai_section += "No test files were detected, increasing overall risk."
+    else:
+        ai_section += f"{tests.get('test_files', 0)} test files were found."
+    ai_section += "\n\n"
+
+    # AI Code Safety Section
+    ai_section += "### AI Code Safety\n\n"
+    if ai_sast or hallucinated:
+        if hallucinated:
+            ai_section += "**Hallucinated Dependencies (CRITICAL):**\n"
+            for h in hallucinated:
+                ai_section += f"- `{h.get('package')}`: {h.get('vulnerability')}\n"
+            ai_section += "\n"
+
+        llm_findings = [f for f in sast if f.get("category") == "llm_security"]
+        if llm_findings:
+            ai_section += "**LLM/Prompt Security Issues:**\n"
+            for f in llm_findings[:5]:
+                ai_section += f"- [{f.get('severity').upper()}] `{f.get('file')}` L{f.get('line')}: {f.get('message')}\n"
+            ai_section += "\n"
+
+        ai_specific = [f for f in sast if f.get("category") == "ai_code"]
+        if ai_specific:
+            ai_section += "**AI-Generated Code Anti-Patterns:**\n"
+            for f in ai_specific[:5]:
+                ai_section += f"- [{f.get('severity').upper()}] `{f.get('file')}` L{f.get('line')}: {f.get('message')}\n"
+            ai_section += "\n"
+    else:
+        ai_section += "No AI-specific code issues detected.\n\n"
+
+    # Critical findings
+    ai_section += "### Critical Findings\n\n"
 
     if secrets:
         ai_section += "**Exposed Secrets:**\n"
@@ -1298,17 +1847,43 @@ def _generate_fallback_report(findings: dict) -> str:
         ai_section += "\n"
 
     if sca:
-        ai_section += "**Vulnerable Dependencies:**\n"
-        for v in sca[:5]:
-            ai_section += f"- {v.get('package')} {v.get('version')}: {v.get('vulnerability')}\n"
+        vuln_deps = [f for f in sca if f.get("source") != "hallucination-check"]
+        if vuln_deps:
+            ai_section += "**Vulnerable Dependencies:**\n"
+            for v in vuln_deps[:5]:
+                ai_section += f"- {v.get('package')} {v.get('version')}: {v.get('vulnerability')}\n"
+            ai_section += "\n"
+
+    critical_high_sast = [f for f in sast if f.get("severity") in ("critical", "high")]
+    if critical_high_sast:
+        ai_section += "**Critical/High-Severity Code Issues:**\n"
+        for h in critical_high_sast[:10]:
+            ai_section += f"- [{h.get('severity').upper()}] {h.get('rule')} in `{h.get('file')}` line {h.get('line')}: {h.get('message')}\n"
         ai_section += "\n"
 
-    high_sast = [f for f in sast if f.get("severity") == "high"]
-    if high_sast:
-        ai_section += "**High-Severity Code Issues:**\n"
-        for h in high_sast[:5]:
-            ai_section += f"- {h.get('rule')} in `{h.get('file')}` line {h.get('line')}: {h.get('message')}\n"
-        ai_section += "\n"
+    # Cross-layer insights
+    ai_section += "### Cross-Layer Insights\n\n"
+    cross_insights = []
+    if sca and tests.get("test_files", 0) == 0:
+        cross_insights.append("- ESCALATED: Dependency vulnerabilities found in code with NO test coverage")
+    if secrets:
+        has_gitignore = False
+        for check in findings.get("repo_health", {}).get("checks", []):
+            if check.get("name") == ".gitignore" and check.get("status") == "pass":
+                has_gitignore = True
+        if not has_gitignore:
+            cross_insights.append("- ESCALATED: Secrets found with no .gitignore protection")
+
+    prompt_injection = [f for f in sast if "prompt_injection" in f.get("rule", "")]
+    no_output_val = [f for f in sast if f.get("rule") == "no_output_validation"]
+    if prompt_injection and no_output_val:
+        cross_insights.append("- ESCALATED: Prompt injection + no output validation = critical attack chain")
+
+    if cross_insights:
+        for ci in cross_insights:
+            ai_section += ci + "\n"
+    else:
+        ai_section += "No cross-layer escalations identified.\n"
 
     return _build_full_report(findings, ai_section)
 
@@ -1323,24 +1898,22 @@ def clone_repo(repo_url: str, branch: str = "main") -> Path:
 
     repo_path = REPO_DIR
     if repo_path.exists():
-        import shutil
         shutil.rmtree(str(repo_path))
 
     # Try specified branch first
     rc, stdout, stderr = _run(
         ["git", "clone", "--depth", "1", "--branch", branch, repo_url, str(repo_path)],
-        timeout=120, cwd="/tmp",
+        timeout=TIMEOUT_CLONE, cwd="/tmp",
     )
 
     if rc != 0:
         log(f"  Branch '{branch}' failed, trying without --branch...")
         if repo_path.exists():
-            import shutil
             shutil.rmtree(str(repo_path))
 
         rc, stdout, stderr = _run(
             ["git", "clone", "--depth", "1", repo_url, str(repo_path)],
-            timeout=120, cwd="/tmp",
+            timeout=TIMEOUT_CLONE, cwd="/tmp",
         )
 
         if rc != 0:
@@ -1351,13 +1924,13 @@ def clone_repo(repo_url: str, branch: str = "main") -> Path:
 
 
 def run_audit(repo_url: str, branch: str = "main",
-              gradient_key: str = "", model: str = "openai-gpt-oss-120b") -> None:
+              gradient_key: str = "", model: str = "llama3.3-70b-instruct") -> None:
     """Execute the full 7-layer CodeScope audit."""
     start_time = time.time()
     _ensure_dirs()
 
     log("=" * 60)
-    log("  CodeScope 7-Layer Security Audit")
+    log("  CodeScope: AI-Era Security Audit")
     log("=" * 60)
     log(f"Repository:  {repo_url}")
     log(f"Branch:      {branch}")
@@ -1472,12 +2045,15 @@ def run_audit(repo_url: str, branch: str = "main",
         if isinstance(value, list):
             total_findings += len(value)
 
+    risk_score = _calculate_risk_score(findings)
+
     log("")
     log("=" * 60)
     log("  Audit Complete")
     log("=" * 60)
     log(f"Language:       {language}")
     log(f"Total findings: {total_findings}")
+    log(f"Risk score:     {risk_score}/100")
     log(f"Elapsed:        {elapsed:.1f}s")
     log("")
 
@@ -1485,6 +2061,7 @@ def run_audit(repo_url: str, branch: str = "main",
     summary = {
         "status": "complete",
         "total_findings": total_findings,
+        "risk_score": risk_score,
         "language": language,
         "elapsed_seconds": round(elapsed, 1),
         "layers": {
@@ -1506,13 +2083,13 @@ def run_audit(repo_url: str, branch: str = "main",
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="CodeScope 7-Layer Security Audit")
+    parser = argparse.ArgumentParser(description="CodeScope: AI-Era Security Audit")
     parser.add_argument("repo_url", help="GitHub repository URL to audit")
     parser.add_argument("--branch", default="main", help="Branch to audit (default: main)")
     parser.add_argument("--gradient-key", default="",
                         help="Gradient AI API key (default: from EPHEMERAL_GRADIENT_KEY env)")
-    parser.add_argument("--model", default="openai-gpt-oss-120b",
-                        help="AI model to use (default: openai-gpt-oss-120b)")
+    parser.add_argument("--model", default=os.environ.get("EPHEMERAL_MODEL", "llama3.3-70b-instruct"),
+                        help="AI model to use (default: llama3.3-70b-instruct)")
 
     args = parser.parse_args()
     run_audit(args.repo_url, args.branch, args.gradient_key, args.model)
