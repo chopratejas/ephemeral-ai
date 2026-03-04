@@ -405,6 +405,17 @@ async def get_worker_task(worker_id: str):
 # ========================================
 
 
+@app.get("/api/v1/audits/recent")
+async def get_recent_audits(limit: int = 50):
+    """Get the most recent audits across all users.
+
+    Data is persisted in DigitalOcean Spaces - survives restarts.
+    """
+    from .audit_store import get_recent_audits as fetch_recent
+    recent = await asyncio.to_thread(fetch_recent, limit)
+    return {"audits": recent, "total": len(recent)}
+
+
 @app.get("/api/v1/stats", response_model=StatsResponse)
 async def get_stats():
     completed = [t for t in tasks.values() if t.status == TaskPhase.COMPLETED]
@@ -595,6 +606,25 @@ async def _wait_for_completion(task: Task, timeout: int) -> None:
                     task.droplet.lifetime_seconds = (
                         datetime.utcnow() - task.phases[0].started_at
                     ).total_seconds()
+
+                # Persist audit result to Spaces (survives restarts)
+                try:
+                    from .audit_store import save_audit
+                    await asyncio.to_thread(
+                        save_audit,
+                        task_id=task_id,
+                        repo_url=task.prompt.replace("CodeScope audit: ", "").split(" (branch")[0],
+                        branch="main",
+                        risk_score=done_data.get("risk_score", 0),
+                        total_findings=done_data.get("total_findings", 0),
+                        severity_counts={},
+                        language=done_data.get("language", "unknown"),
+                        framework=done_data.get("framework", "unknown"),
+                        duration_seconds=task.droplet.lifetime_seconds,
+                        summary=f"Audit completed with {done_data.get('total_findings', 0)} findings",
+                    )
+                except Exception as e:
+                    logger.error("Failed to persist audit: %s", e)
 
                 return
         except Exception:

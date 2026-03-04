@@ -6,7 +6,7 @@ import type {
   AuditHistoryEntry,
   PlatformStats,
 } from '../types';
-import { startAudit, getTaskStatus, getStats } from '../api';
+import { startAudit, getTaskStatus, getStats, getHistory } from '../api';
 
 export type AppView = 'home' | 'scanning' | 'report';
 
@@ -339,20 +339,19 @@ export function useAudit() {
     warm_pool_busy: 0,
     average_task_duration_seconds: 0,
   });
-  const [history, setHistory] = useState<AuditHistoryEntry[]>([
-    { task_id: 'tsk_a1b2c3d4', repo_name: 'pallets/flask', risk_score: 42, total_findings: 30, duration_seconds: 11.7, cost_usd: 0.009, completed_at: new Date(Date.now() - 120000).toISOString(), status: 'completed' },
-    { task_id: 'tsk_e5f6g7h8', repo_name: 'expressjs/cors', risk_score: 28, total_findings: 8, duration_seconds: 8.4, cost_usd: 0.009, completed_at: new Date(Date.now() - 900000).toISOString(), status: 'completed' },
-    { task_id: 'tsk_i9j0k1l2', repo_name: 'psf/requests', risk_score: 19, total_findings: 5, duration_seconds: 7.2, cost_usd: 0.009, completed_at: new Date(Date.now() - 3600000).toISOString(), status: 'completed' },
-    { task_id: 'tsk_m3n4o5p6', repo_name: 'tiangolo/fastapi', risk_score: 15, total_findings: 4, duration_seconds: 9.1, cost_usd: 0.009, completed_at: new Date(Date.now() - 7200000).toISOString(), status: 'completed' },
-    { task_id: 'tsk_q7r8s9t0', repo_name: 'django/django', risk_score: 51, total_findings: 47, duration_seconds: 14.3, cost_usd: 0.012, completed_at: new Date(Date.now() - 14400000).toISOString(), status: 'completed' },
-  ]);
+  const [history, setHistory] = useState<AuditHistoryEntry[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const simulationRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    // Try to fetch real stats
+    // Fetch real audit history from Spaces
+    getHistory()
+      .then((h) => { if (h.length > 0) setHistory(h); })
+      .catch(() => {});
+
+    // Fetch real stats
     getStats()
       .then((s) => setStats(s))
       .catch(() => {
@@ -476,7 +475,7 @@ export function useAudit() {
 
         // No fake timers - layer status comes ONLY from real log data
         // This variable exists only so the cleanup in the poll can reference it
-        const progressTimer: ReturnType<typeof setInterval> | null = null;
+        const progressTimer: ReturnType<typeof setInterval> | undefined = undefined;
 
         // Poll for status + logs every 3 seconds
         const poll = setInterval(async () => {

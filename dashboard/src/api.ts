@@ -234,7 +234,32 @@ export async function getStats(): Promise<PlatformStats> {
 }
 
 export async function getHistory(): Promise<AuditHistoryEntry[]> {
-  return request('/api/v1/history');
+  try {
+    const resp = await request<{ audits: Array<{
+      task_id: string;
+      repo_name: string;
+      risk_score: number;
+      total_findings: number;
+      duration_seconds: number;
+      language: string;
+      framework: string;
+      completed_at: string;
+      summary: string;
+    }> }>('/api/v1/audits/recent');
+
+    return (resp.audits || []).map(a => ({
+      task_id: a.task_id,
+      repo_name: a.repo_name,
+      risk_score: a.risk_score,
+      total_findings: a.total_findings,
+      duration_seconds: a.duration_seconds,
+      cost_usd: 0.009,
+      completed_at: a.completed_at,
+      status: 'completed' as const,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export function connectWebSocket(
