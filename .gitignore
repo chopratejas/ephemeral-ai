@@ -35,3 +35,6 @@ Thumbs.db
 
 # Misc
 *.log
+
+# Healthify provenance data
+.healthify/

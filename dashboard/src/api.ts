@@ -89,81 +89,68 @@ export async function getTaskStatus(taskId: string): Promise<AuditResult> {
 
     const rawFindings = reportData.findings || {};
 
-    // Parse SAST findings
-    const sast = (rawFindings.sast || []) as Array<{
-      file: string; line: number; severity: string; rule: string; message: string; category: string;
-    }>;
+    // CodeScope v3 format: each category is { findings: [...], note?, error? }
+    // Categories: ai_security, injection, auth, secrets, dependencies, error_handling, dynamic
     let idx = 0;
-    for (const f of sast) {
-      findings.push({
-        id: `f${++idx}`,
-        severity: (f.severity || 'medium') as Finding['severity'],
-        category: f.category === 'llm_security' ? 'AI Code Safety' :
-                  f.category === 'ai_code' ? 'AI Patterns' :
-                  f.category === 'owasp' ? 'OWASP Top 10' : 'SAST',
-        title: f.message || f.rule,
-        file: f.file || '',
-        line: f.line || 0,
-        description: f.message || '',
-        fix: '',
-      });
+
+    const categoryLabels: Record<string, string> = {
+      ai_security: 'AI Security',
+      injection: 'Injection',
+      auth: 'Auth & Access',
+      secrets: 'Secrets',
+      dependencies: 'Dependencies',
+      error_handling: 'Error Handling',
+      dynamic: 'Dynamic Test',
+      sast: 'SAST',  // v2 compat
+      sca: 'Dependencies',  // v2 compat
+    };
+
+    for (const [category, value] of Object.entries(rawFindings)) {
+      // v3 format: { findings: [...] }
+      let items: Array<Record<string, unknown>> = [];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const obj = value as Record<string, unknown>;
+        items = (obj.findings || []) as Array<Record<string, unknown>>;
+      } else if (Array.isArray(value)) {
+        // v2 format: flat array
+        items = value as Array<Record<string, unknown>>;
+      }
+
+      for (const f of items) {
+        findings.push({
+          id: `f${++idx}`,
+          severity: ((f.severity as string) || 'medium') as Finding['severity'],
+          category: categoryLabels[category] || category,
+          title: (f.title as string) || (f.message as string) || (f.rule as string) || 'Unknown',
+          file: (f.file as string) || '',
+          line: (f.line as number) || 0,
+          description: (f.description as string) || (f.exploit as string) || (f.message as string) || '',
+          fix: (f.fix as string) || (f.fix_code as string) || '',
+          fix_code: (f.fix_code as string) || undefined,
+        });
+      }
     }
 
-    // Parse SCA findings
-    const sca = (rawFindings.sca || []) as Array<{
-      package: string; severity: string; vulnerability: string;
-    }>;
-    for (const f of sca) {
-      findings.push({
-        id: `f${++idx}`,
-        severity: (f.severity || 'high') as Finding['severity'],
-        category: f.vulnerability?.includes('HALLUCINATED') ? 'Supply Chain' : 'Dependencies',
-        title: f.vulnerability || `Vulnerable: ${f.package}`,
-        file: '',
-        line: 0,
-        description: f.vulnerability || '',
-        fix: '',
-      });
-    }
+    // Build layer summary from v3 category counts
+    const countFindings = (key: string): number => {
+      const val = rawFindings[key];
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        return ((val as Record<string, unknown>).findings as unknown[] || []).length;
+      }
+      if (Array.isArray(val)) return val.length;
+      return 0;
+    };
 
-    // Parse secrets
-    const secrets = (rawFindings.secrets || []) as Array<{
-      file: string; line: number; type: string;
-    }>;
-    for (const f of secrets) {
-      findings.push({
-        id: `f${++idx}`,
-        severity: 'high',
-        category: 'Secrets',
-        title: `${f.type} detected`,
-        file: f.file || '',
-        line: f.line || 0,
-        description: `Secret of type "${f.type}" found in code`,
-        fix: 'Remove from version control. Use environment variables or a secrets manager.',
-      });
-    }
-
-    // Build layer summary from findings counts
+    // Layers map to v3 phases: Understand, Setup, Auth, Injection, AI Security, Secrets, Synthesis
     const layerCounts = [
-      sast.length,
-      sca.length,
-      secrets.length,
-      ((rawFindings.licenses || []) as unknown[]).length,
-      0, // tests (not a finding count)
-      0, // health (not a finding count)
-      0, // AI synthesis
+      0,  // Understanding (not a finding count)
+      0,  // Setup (not a finding count)
+      countFindings('auth'),
+      countFindings('injection'),
+      countFindings('ai_security'),
+      countFindings('secrets') + countFindings('dependencies') + countFindings('error_handling'),
+      countFindings('dynamic'),
     ];
-
-    // Try to get layer counts from test/health objects
-    const tests = rawFindings.tests as unknown;
-    if (tests && typeof tests === 'object' && tests !== null && !Array.isArray(tests)) {
-      layerCounts[4] = ((tests as Record<string, unknown>).test_files as number) || 0;
-    }
-    const health = rawFindings.repo_health as unknown;
-    if (health && typeof health === 'object' && health !== null && !Array.isArray(health)) {
-      const checks = ((health as Record<string, unknown>).checks || []) as unknown[];
-      layerCounts[5] = checks.length;
-    }
 
     layers = layerNames.map((name, i) => ({
       id: i + 1,
