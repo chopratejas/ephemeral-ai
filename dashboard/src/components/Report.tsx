@@ -190,7 +190,6 @@ export default function Report({ result, onNewAudit }: ReportProps) {
         className="mb-8"
         style={{
           border: '1px solid #1e1e2e',
-          borderLeft: '3px solid #14b8a6',
           borderRadius: '12px',
           background: '#12121a',
           padding: '24px',

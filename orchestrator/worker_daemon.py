@@ -802,6 +802,215 @@ def execute_audit(task: dict) -> None:
     upload_task_results(task)
 
 
+def execute_fix(task: dict) -> None:
+    """Apply a security fix to the already-cloned repo.
+
+    The repo is at /opt/audit/repo from the previous audit.
+    Steps:
+      1. Create a branch
+      2. Read the vulnerable file
+      3. LLM generates the fix
+      4. Apply the fix
+      5. Try to build
+      6. Try to run tests
+      7. Commit
+      8. Save result with branch name + diff
+    """
+    task_id = task.get("task_id", "unknown")
+    finding = task.get("finding", {})
+    repo_path = Path(task.get("repo_path", "/opt/audit/repo"))
+
+    file_path = finding.get("file", "")
+    line_num = finding.get("line", 0)
+    title = finding.get("title", "Security fix")
+    description = finding.get("description", "")
+    fix_suggestion = finding.get("fix", "")
+    fix_code = finding.get("fix_code", "")
+
+    log(f"\n{'=' * 60}")
+    log(f"FIXING: {title}")
+    log(f"FILE: {file_path}:{line_num}")
+    log(f"{'=' * 60}\n")
+
+    post_task_status(task_id, "running", "fix_starting")
+
+    branch_name = f"codescope/fix-{task_id[:8]}"
+    final_status = "failed"
+
+    try:
+        # Check repo exists
+        if not repo_path.exists():
+            log("ERROR: Repo not found at /opt/audit/repo. Run an audit first.")
+            task["_final_status"] = "failed"
+            task["_final_exit_code"] = 1
+            upload_task_results(task)
+            return
+
+        # 1. Create branch
+        log(f"Creating branch: {branch_name}")
+        subprocess.run(["git", "checkout", "-b", branch_name],
+                       cwd=str(repo_path), capture_output=True, timeout=10)
+
+        # 2. Read the vulnerable file
+        target_file = repo_path / file_path
+        if not target_file.exists():
+            log(f"WARNING: File {file_path} not found. Trying to fix anyway.")
+            original_code = ""
+        else:
+            original_code = target_file.read_text(errors="replace")
+
+        # Get context around the vulnerable line
+        lines = original_code.split("\n")
+        start = max(0, line_num - 20)
+        end = min(len(lines), line_num + 20)
+        context = "\n".join(f"{i+1:4d} | {l}" for i, l in enumerate(lines[start:end], start=start))
+
+        # 3. LLM generates the fix
+        log("Generating fix via Gradient AI...")
+        post_task_status(task_id, "running", "generating_fix")
+
+        fix_prompt = f"""You are fixing a security vulnerability in a codebase.
+
+FILE: {file_path}
+VULNERABILITY: {title}
+DESCRIPTION: {description}
+SUGGESTED FIX: {fix_suggestion}
+
+Here is the code around the vulnerable area (with line numbers):
+```
+{context}
+```
+
+{f"Here is a suggested code fix: {fix_code}" if fix_code else ""}
+
+Generate the COMPLETE fixed version of this file. Output ONLY the file content, no markdown fences, no explanation. The fix should be minimal - only change what's needed to fix the vulnerability."""
+
+        response = call_gradient([
+            {"role": "system", "content": "You are a security engineer writing a minimal code fix. Output ONLY the fixed file content. No markdown, no explanation."},
+            {"role": "user", "content": fix_prompt},
+        ])
+
+        if not response:
+            log("ERROR: LLM returned empty response")
+            task["_final_status"] = "failed"
+            upload_task_results(task)
+            return
+
+        fixed_code = response.strip()
+        # Strip markdown fences if present
+        if fixed_code.startswith("```"):
+            fixed_code = fixed_code.split("\n", 1)[1]
+            if fixed_code.endswith("```"):
+                fixed_code = fixed_code[:fixed_code.rfind("```")]
+            fixed_code = fixed_code.strip()
+
+        # 4. Apply the fix
+        log(f"Applying fix to {file_path}...")
+        if target_file.exists():
+            target_file.write_text(fixed_code)
+            log("Fix applied.")
+        else:
+            log("Skipping file write (file not found)")
+
+        # 5. Try to build
+        log("Running build...")
+        post_task_status(task_id, "running", "building")
+        build_passed = True
+        build_output = ""
+
+        # Detect build command
+        if (repo_path / "pyproject.toml").exists() or (repo_path / "setup.py").exists():
+            rc, stdout, stderr = _run(
+                [sys.executable, "-m", "py_compile", str(target_file)],
+                timeout=30, cwd=str(repo_path),
+            )
+            build_output = stderr or stdout
+            build_passed = rc == 0
+        elif (repo_path / "package.json").exists():
+            rc, stdout, stderr = _run(
+                ["npx", "tsc", "--noEmit"], timeout=60, cwd=str(repo_path),
+            )
+            build_output = stderr or stdout
+            build_passed = rc == 0
+
+        log(f"Build: {'PASSED' if build_passed else 'FAILED'}")
+        if not build_passed:
+            log(f"Build output: {build_output[:500]}")
+
+        # 6. Try to run tests
+        log("Running tests...")
+        post_task_status(task_id, "running", "testing")
+        tests_passed = True
+        test_output = ""
+
+        if (repo_path / "pytest.ini").exists() or (repo_path / "pyproject.toml").exists():
+            rc, stdout, stderr = _run(
+                [sys.executable, "-m", "pytest", "--tb=short", "-q", "--timeout=30"],
+                timeout=120, cwd=str(repo_path),
+            )
+            test_output = stdout or stderr
+            tests_passed = rc == 0
+        elif (repo_path / "package.json").exists():
+            rc, stdout, stderr = _run(
+                ["npm", "test"], timeout=120, cwd=str(repo_path),
+            )
+            test_output = stdout or stderr
+            tests_passed = rc == 0
+
+        log(f"Tests: {'PASSED' if tests_passed else 'FAILED/SKIPPED'}")
+
+        # 7. Get the diff
+        rc, diff_output, _ = _run(
+            ["git", "diff"], timeout=10, cwd=str(repo_path),
+        )
+
+        # 8. Commit
+        log("Committing fix...")
+        subprocess.run(["git", "add", "-A"], cwd=str(repo_path), capture_output=True, timeout=10)
+        subprocess.run(
+            ["git", "commit", "-m", f"fix: {title} (CodeScope)"],
+            cwd=str(repo_path), capture_output=True, timeout=10,
+        )
+
+        # Save fix result
+        import json as _json
+        fix_result = {
+            "branch": branch_name,
+            "title": title,
+            "file": file_path,
+            "line": line_num,
+            "severity": finding.get("severity", "medium"),
+            "description": description,
+            "diff": diff_output[:5000] if diff_output else "",
+            "build_passed": build_passed,
+            "build_output": build_output[:1000],
+            "tests_passed": tests_passed,
+            "test_output": test_output[:1000],
+        }
+
+        fix_result_path = Path("/tmp/output/fix_result.json")
+        fix_result_path.parent.mkdir(parents=True, exist_ok=True)
+        fix_result_path.write_text(_json.dumps(fix_result, indent=2))
+
+        log(f"\nFix complete: branch={branch_name}")
+        log(f"Build: {'PASSED' if build_passed else 'FAILED'}")
+        log(f"Tests: {'PASSED' if tests_passed else 'FAILED/SKIPPED'}")
+
+        final_status = "completed"
+        task["_final_status"] = "completed"
+        task["_final_exit_code"] = 0
+
+    except Exception as e:
+        log(f"Fix error: {e}")
+        log(traceback.format_exc())
+        task["_final_status"] = "failed"
+        task["_final_exit_code"] = 1
+
+    task["_attempts"] = 1
+    task["_language"] = "fix"
+    upload_task_results(task)
+
+
 def execute_task(task: dict) -> None:
     """Run the full self-healing code generation and execution cycle for a task.
 
@@ -1019,16 +1228,17 @@ def main() -> None:
             # Update status to busy
             post_status("busy", {"task_id": task_id})
 
-            # Clean workspace from previous task
-            clean_workspace()
+            # Clean workspace (but NOT for fix tasks - they need the repo)
+            if task.get("type") != "fix":
+                clean_workspace()
 
             # Execute the task (dispatch by type)
             try:
                 if task.get("type") == "audit":
-                    # CodeScope security audit
                     execute_audit(task)
+                elif task.get("type") == "fix":
+                    execute_fix(task)
                 else:
-                    # Standard code generation task
                     execute_task(task)
 
                 if task.get("_final_status") == "completed":

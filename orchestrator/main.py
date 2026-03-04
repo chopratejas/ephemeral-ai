@@ -202,33 +202,158 @@ async def cancel_task(task_id: str):
 
 
 @app.post("/api/v1/findings/fix")
-async def generate_finding_fix(body: dict):
-    """Generate a code fix for a specific finding.
+async def fix_finding_on_droplet(body: dict):
+    """Fix a finding on the same Droplet that did the audit.
 
-    Request: { file, line, vulnerability, fix_suggestion, code_context }
-    Returns the LLM-generated fix with before/after code.
+    Request: {
+        audit_task_id: "the audit task id",
+        finding: { file, line, title, description, fix, fix_code },
+    }
+
+    The Droplet already has the repo cloned. It will:
+    1. Create a branch
+    2. LLM generates the fix
+    3. Apply + build + test
+    4. Commit
+    5. Return: { branch, diff, build_passed, test_results, fix_id }
     """
-    from .fix_generator import generate_fix
+    audit_task_id = body.get("audit_task_id", "")
+    finding = body.get("finding", {})
 
-    file_path = body.get("file", "")
-    line = body.get("line", 0)
-    vuln = body.get("vulnerability", "")
+    if not finding.get("file") or not finding.get("title"):
+        raise HTTPException(400, "finding.file and finding.title are required")
 
-    if not file_path or not vuln:
-        raise HTTPException(400, "file and vulnerability are required")
-
-    code_context = body.get("code_context", f"// File: {file_path}, Line: {line}")
-
-    fix = await asyncio.to_thread(
-        generate_fix,
-        file_path=file_path,
-        line_number=line,
-        vulnerability=vuln,
-        code_context=code_context,
-        fix_suggestion=body.get("fix_suggestion", ""),
+    # Create a fix task
+    fix_task_id = str(uuid.uuid4())
+    fix_task = Task(
+        task_id=fix_task_id,
+        prompt=f"Fix: {finding.get('title', '')} in {finding.get('file', '')}",
     )
+    tasks[fix_task_id] = fix_task
+    _record_phase(fix_task, TaskPhase.PLANNING)
+    fix_task.logs.append(f"Fixing: {finding.get('title', '')}")
+    fix_task.logs.append(f"File: {finding.get('file', '')}:{finding.get('line', 0)}")
 
-    return fix
+    # Find a warm worker (preferably the one that did the audit)
+    audit_task = tasks.get(audit_task_id)
+    target_worker = None
+
+    if audit_task and audit_task.droplet.id:
+        # Try to find the worker that did the audit
+        target_worker = warm_pool.get_worker_by_droplet(audit_task.droplet.id)
+
+    if not target_worker:
+        # Fall back to any idle worker
+        target_worker = warm_pool.get_idle_worker("s-1vcpu-1gb")
+
+    if not target_worker:
+        raise HTTPException(503, "No worker available. Run an audit first.")
+
+    # Route the fix task to the worker
+    warm_pool.mark_busy(target_worker.worker_id, fix_task_id)
+    upload_urls = generate_upload_presigned_urls(fix_task_id)
+
+    task_queue.enqueue(target_worker.worker_id, {
+        "task_id": fix_task_id,
+        "type": "fix",
+        "finding": finding,
+        "repo_path": "/opt/audit/repo",  # Already cloned from audit
+        "upload_urls": upload_urls,
+    })
+
+    fix_task.droplet.id = target_worker.droplet_id
+    fix_task.droplet.ip = target_worker.droplet_ip
+    fix_task.logs.append(f"Routed to worker {target_worker.worker_id[:8]} (repo already cloned)")
+
+    _record_phase(fix_task, TaskPhase.EXECUTING)
+
+    return {
+        "fix_task_id": fix_task_id,
+        "status": "fixing",
+        "worker_id": target_worker.worker_id[:8],
+        "message": "Fix in progress. Poll GET /api/v1/tasks/{fix_task_id} for status.",
+    }
+
+
+@app.post("/api/v1/findings/create-pr")
+async def create_pull_request(body: dict):
+    """Create a GitHub PR from a completed fix.
+
+    Request: {
+        fix_task_id: "the fix task id",
+        github_token: "ghp_xxxx",
+        repo_url: "https://github.com/owner/repo",
+    }
+    """
+    import urllib.request as urllib_req
+
+    fix_task_id = body.get("fix_task_id", "")
+    github_token = body.get("github_token", "")
+    repo_url = body.get("repo_url", "")
+
+    if not github_token or not repo_url:
+        raise HTTPException(400, "github_token and repo_url are required")
+
+    # Check if fix task completed
+    fix_task = tasks.get(fix_task_id)
+    if not fix_task or fix_task.status != TaskPhase.COMPLETED:
+        raise HTTPException(400, "Fix task not completed yet")
+
+    # Get the fix results from Spaces
+    try:
+        import tarfile, io
+        from .spaces import _create_client as create_s3
+        s3 = create_s3()
+        obj = await asyncio.to_thread(
+            s3.get_object, Bucket=settings.spaces_bucket,
+            Key=f"tasks/{fix_task_id}/output.tar.gz"
+        )
+        tar_bytes = obj["Body"].read()
+
+        fix_result = {}
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
+            for member in tar.getmembers():
+                if member.isfile() and member.name.endswith("fix_result.json"):
+                    import json as _json
+                    fix_result = _json.loads(tar.extractfile(member).read().decode())
+
+        branch = fix_result.get("branch", "")
+        if not branch:
+            raise HTTPException(500, "No branch found in fix result")
+
+        # Create PR via GitHub API
+        repo_path = repo_url.replace("https://github.com/", "").rstrip("/")
+        pr_body = {
+            "title": f"fix: {fix_result.get('title', 'Security fix')} (CodeScope)",
+            "body": f"## Security Fix\n\n**Finding:** {fix_result.get('title', '')}\n**File:** {fix_result.get('file', '')}\n**Severity:** {fix_result.get('severity', '')}\n\n{fix_result.get('description', '')}\n\n---\n*Generated by [CodeScope](https://ephemeral-ai.sfo3.digitaloceanspaces.com/dashboard/index.html)*",
+            "head": branch,
+            "base": "main",
+        }
+
+        req = urllib_req.Request(
+            f"https://api.github.com/repos/{repo_path}/pulls",
+            data=json.dumps(pr_body).encode(),
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json",
+                "User-Agent": "CodeScope/1.0",
+            },
+            method="POST",
+        )
+
+        resp = await asyncio.to_thread(urllib_req.urlopen, req, timeout=15)
+        pr_data = json.loads(resp.read().decode())
+
+        return {
+            "pr_url": pr_data.get("html_url", ""),
+            "pr_number": pr_data.get("number", 0),
+            "status": "created",
+        }
+
+    except Exception as e:
+        logger.error("PR creation failed: %s", e)
+        raise HTTPException(500, f"PR creation failed: {e}")
 
 
 # ========================================

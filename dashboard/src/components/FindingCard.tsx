@@ -1,18 +1,11 @@
 import { useState } from 'react';
-import type { Finding, Severity } from '../types';
+import type { Finding } from '../types';
 import SeverityBadge from './SeverityBadge';
 
 interface FindingCardProps {
   finding: Finding;
 }
 
-const SEVERITY_BORDER_COLORS: Record<Severity, string> = {
-  critical: '#ef4444',
-  high: '#f59e0b',
-  medium: '#eab308',
-  low: '#3b82f6',
-  info: '#71717a',
-};
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
@@ -138,12 +131,10 @@ export default function FindingCard({ finding }: FindingCardProps) {
   const [showFix, setShowFix] = useState(false);
 
   const hasFix = !!(finding.fix || finding.fix_code);
-  const borderColor = SEVERITY_BORDER_COLORS[finding.severity];
 
   return (
     <div
       className="border border-border rounded-lg bg-surface overflow-hidden"
-      style={{ borderLeft: `3px solid ${borderColor}` }}
     >
       <div className="flex items-start">
         <button
@@ -222,8 +213,8 @@ export default function FindingCard({ finding }: FindingCardProps) {
               <div
                 className="px-4 py-3 rounded"
                 style={{
-                  borderLeft: '3px solid #22c55e',
                   background: 'rgba(34, 197, 94, 0.04)',
+                  border: '1px solid rgba(34, 197, 94, 0.1)',
                 }}
               >
                 <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#22c55e' }}>

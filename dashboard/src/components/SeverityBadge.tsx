@@ -62,7 +62,6 @@ export function SeverityCount({ severity, count }: { severity: Severity; count: 
   return (
     <div
       className={`flex flex-col items-center justify-center px-5 py-3.5 rounded-lg border ${c.bg} ${c.border} min-w-[72px]`}
-      style={{ borderLeft: `3px solid ${c.hex}` }}
     >
       <span className={`text-2xl font-bold font-mono ${c.text}`}>{count}</span>
       <span className={`text-xs font-mono font-semibold ${c.text} opacity-70 mt-0.5`}>
