@@ -139,6 +139,54 @@ async def get_task(task_id: str):
     return task
 
 
+@app.get("/api/v1/tasks/{task_id}/report")
+async def get_task_report(task_id: str):
+    """Get the parsed audit report with findings from Spaces."""
+    import tarfile, io
+
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.status != TaskPhase.COMPLETED:
+        raise HTTPException(400, "Task not completed yet")
+
+    # Download output.tar.gz from Spaces and extract findings + report
+    try:
+        from .spaces import _create_client as create_s3
+        from .config import settings as cfg
+        s3 = create_s3()
+        key = f"tasks/{task_id}/output.tar.gz"
+        obj = await asyncio.to_thread(
+            s3.get_object, Bucket=cfg.spaces_bucket, Key=key
+        )
+        tar_bytes = obj["Body"].read()
+
+        findings = []
+        report_md = ""
+
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
+            for member in tar.getmembers():
+                if member.isfile() and member.name.endswith("findings.json"):
+                    f = tar.extractfile(member)
+                    if f:
+                        import json as _json
+                        findings = _json.loads(f.read().decode())
+                elif member.isfile() and member.name.endswith("report.md"):
+                    f = tar.extractfile(member)
+                    if f:
+                        report_md = f.read().decode()
+
+        return {
+            "task_id": task_id,
+            "findings": findings,
+            "report_md": report_md,
+            "logs": task.logs,
+        }
+    except Exception as e:
+        logger.error("Failed to get report for %s: %s", task_id, e)
+        raise HTTPException(500, f"Failed to extract report: {e}")
+
+
 @app.delete("/api/v1/tasks/{task_id}")
 async def cancel_task(task_id: str):
     """Force-kill a task."""

@@ -39,19 +39,8 @@ interface RawTask {
   results: { filename: string; size_bytes: number; download_url: string }[];
   cost: { total_cost_usd: number; savings_pct: number; always_on_equivalent_monthly: number };
   droplet: { id: number; ip: string; slug: string; lifetime_seconds: number };
+  logs: string[];
   error: string | null;
-}
-
-async function fetchSpacesFile(results: RawTask['results'], filename: string): Promise<string | null> {
-  const file = results.find(r => r.filename === filename);
-  if (!file || !file.download_url) return null;
-  try {
-    const res = await fetch(file.download_url);
-    if (!res.ok) return null;
-    return res.text();
-  } catch {
-    return null;
-  }
 }
 
 export async function getTaskStatus(taskId: string): Promise<AuditResult> {
@@ -79,7 +68,7 @@ export async function getTaskStatus(taskId: string): Promise<AuditResult> {
     };
   }
 
-  // Task completed - try to download the actual findings from Spaces
+  // Task completed - fetch the full report from the backend
   const repoName = raw.prompt?.replace('CodeScope audit: ', '').replace(/https?:\/\/github\.com\//, '').split(' ')[0] || '';
 
   let findings: AuditResult['findings'] = [];
@@ -88,72 +77,128 @@ export async function getTaskStatus(taskId: string): Promise<AuditResult> {
   let language = 'unknown';
   let layers: AuditResult['layers'] = [];
 
-  // Try to fetch and parse the stdout.log for layer info
-  const logContent = await fetchSpacesFile(raw.results, 'stdout.log');
-  if (logContent) {
-    // Extract layer results from log lines like "[Layer 1/7] ... complete: N findings"
-    const layerNames = ['SAST Analysis', 'Dependencies', 'Secrets Detection', 'License Compliance', 'Test Coverage', 'Repo Health', 'AI Synthesis'];
-    const layerRe = /\[Layer (\d)\/7\].*?complete[:\s]+(\d+)\s/gi;
-    let match;
-    while ((match = layerRe.exec(logContent)) !== null) {
-      const idx = parseInt(match[1]) - 1;
-      if (idx >= 0 && idx < 7) {
-        if (!layers[idx]) {
-          layers[idx] = { id: idx + 1, name: layerNames[idx] || `Layer ${idx + 1}`, description: '', status: 'done', findings: parseInt(match[2]) || 0, duration: null };
-        }
-      }
-    }
-    // Fill missing layers
-    for (let i = 0; i < 7; i++) {
-      if (!layers[i]) {
-        layers[i] = { id: i + 1, name: layerNames[i], description: '', status: 'done', findings: 0, duration: null };
-      }
-    }
+  const layerNames = ['SAST Analysis', 'Dependencies', 'Secrets Detection', 'License Compliance', 'Test Coverage', 'Repo Health', 'AI Synthesis'];
 
-    // Extract language
-    const langMatch = logContent.match(/Language:\s*(\w+)/i);
-    if (langMatch) language = langMatch[1];
+  // Fetch the parsed report from the backend (extracts findings.json from tar)
+  try {
+    const reportData = await request<{
+      findings: Record<string, unknown[]>;
+      report_md: string;
+      logs: string[];
+    }>(`/api/v1/tasks/${raw.task_id}/report`);
 
-    // Extract risk score
-    const riskMatch = logContent.match(/Risk Score.*?(\d+)/i);
-    if (riskMatch) riskScore = parseInt(riskMatch[1]);
-  }
+    const rawFindings = reportData.findings || {};
 
-  // Try to download findings.json from the output archive
-  // The archive has report.md and findings.json inside
-  // Since we can't easily untar in browser, extract findings from the log
-  if (logContent) {
-    // Parse SAST findings from log
-    const findingRe = /\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\]\s*`?([^`\n]+?)`?\s*(?:L(\d+))?:\s*(\w+)\s*-\s*(.+)/gi;
-    let fMatch;
-    let fIndex = 0;
-    while ((fMatch = findingRe.exec(logContent)) !== null) {
+    // Parse SAST findings
+    const sast = (rawFindings.sast || []) as Array<{
+      file: string; line: number; severity: string; rule: string; message: string; category: string;
+    }>;
+    let idx = 0;
+    for (const f of sast) {
       findings.push({
-        id: `f${++fIndex}`,
-        severity: fMatch[1].toLowerCase() as Finding['severity'],
-        category: fMatch[4].includes('prompt') || fMatch[4].includes('llm') ? 'AI Code Safety' :
-                  fMatch[4].includes('cors') || fMatch[4].includes('csrf') || fMatch[4].includes('sql') || fMatch[4].includes('xss') ? 'OWASP Top 10' :
-                  fMatch[4].includes('hallucin') ? 'Supply Chain' :
-                  fMatch[4].includes('password') || fMatch[4].includes('secret') || fMatch[4].includes('key') ? 'Secrets Detection' : 'SAST',
-        title: fMatch[5].trim().substring(0, 100),
-        file: fMatch[2].trim(),
-        line: fMatch[3] ? parseInt(fMatch[3]) : 0,
-        description: fMatch[5].trim(),
+        id: `f${++idx}`,
+        severity: (f.severity || 'medium') as Finding['severity'],
+        category: f.category === 'llm_security' ? 'AI Code Safety' :
+                  f.category === 'ai_code' ? 'AI Patterns' :
+                  f.category === 'owasp' ? 'OWASP Top 10' : 'SAST',
+        title: f.message || f.rule,
+        file: f.file || '',
+        line: f.line || 0,
+        description: f.message || '',
         fix: '',
       });
     }
 
-    // Extract AI summary from report section
-    const summaryMatch = logContent.match(/Executive Summary\s*\n([\s\S]*?)(?:\n#|\nRisk Score|\n\*\*)/i);
+    // Parse SCA findings
+    const sca = (rawFindings.sca || []) as Array<{
+      package: string; severity: string; vulnerability: string;
+    }>;
+    for (const f of sca) {
+      findings.push({
+        id: `f${++idx}`,
+        severity: (f.severity || 'high') as Finding['severity'],
+        category: f.vulnerability?.includes('HALLUCINATED') ? 'Supply Chain' : 'Dependencies',
+        title: f.vulnerability || `Vulnerable: ${f.package}`,
+        file: '',
+        line: 0,
+        description: f.vulnerability || '',
+        fix: '',
+      });
+    }
+
+    // Parse secrets
+    const secrets = (rawFindings.secrets || []) as Array<{
+      file: string; line: number; type: string;
+    }>;
+    for (const f of secrets) {
+      findings.push({
+        id: `f${++idx}`,
+        severity: 'high',
+        category: 'Secrets',
+        title: `${f.type} detected`,
+        file: f.file || '',
+        line: f.line || 0,
+        description: `Secret of type "${f.type}" found in code`,
+        fix: 'Remove from version control. Use environment variables or a secrets manager.',
+      });
+    }
+
+    // Build layer summary from findings counts
+    const layerCounts = [
+      sast.length,
+      sca.length,
+      secrets.length,
+      ((rawFindings.licenses || []) as unknown[]).length,
+      0, // tests (not a finding count)
+      0, // health (not a finding count)
+      0, // AI synthesis
+    ];
+
+    // Try to get layer counts from test/health objects
+    const tests = rawFindings.tests as unknown;
+    if (tests && typeof tests === 'object' && tests !== null && !Array.isArray(tests)) {
+      layerCounts[4] = ((tests as Record<string, unknown>).test_files as number) || 0;
+    }
+    const health = rawFindings.repo_health as unknown;
+    if (health && typeof health === 'object' && health !== null && !Array.isArray(health)) {
+      const checks = ((health as Record<string, unknown>).checks || []) as unknown[];
+      layerCounts[5] = checks.length;
+    }
+
+    layers = layerNames.map((name, i) => ({
+      id: i + 1,
+      name,
+      description: '',
+      status: 'done' as const,
+      findings: layerCounts[i] || 0,
+      duration: null,
+    }));
+
+    // Extract summary and risk score from report markdown
+    const reportMd = reportData.report_md || '';
+    const riskMatch = reportMd.match(/Risk Score[:\s]*\*?\*?(\d+)/i);
+    if (riskMatch) riskScore = parseInt(riskMatch[1]);
+
+    const summaryMatch = reportMd.match(/Executive Summary[:\s]*\n([\s\S]*?)(?:\n---|\n##|\n\*\*)/i);
     if (summaryMatch) {
-      summary = summaryMatch[1].trim().substring(0, 500);
+      summary = summaryMatch[1].replace(/[*#]/g, '').trim().substring(0, 600);
     }
-    if (!summary) {
-      summary = `Security audit of ${repoName} completed with ${findings.length} findings across 7 analysis layers.`;
+
+    // Language from logs
+    const logLines = reportData.logs || raw.logs || [];
+    for (const l of logLines) {
+      const lm = (l as string).match(/language.*?detected:\s*(\w+)/i);
+      if (lm) { language = lm[1]; break; }
     }
+  } catch (e) {
+    console.error('Failed to fetch report:', e);
+    summary = `Audit completed with findings. Report extraction failed.`;
   }
 
-  // Calculate duration from phases
+  if (!summary) {
+    summary = `Security audit of ${repoName} completed with ${findings.length} findings across 7 analysis layers.`;
+  }
+
   const totalDuration = raw.phases?.reduce((sum, p) => sum + (p.duration_ms ? p.duration_ms / 1000 : 0), 0) || 0;
 
   return {
