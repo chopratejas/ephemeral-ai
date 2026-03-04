@@ -35,6 +35,7 @@ export interface Finding {
   line: number;
   description: string;
   fix: string;
+  fix_code?: string;
   owasp?: string;
   cwe?: string;
 }
@@ -67,6 +68,8 @@ export interface AuditHistoryEntry {
   cost_usd: number;
   completed_at: string;
   status: AuditStatus;
+  language?: string;
+  framework?: string;
 }
 
 export interface PlatformStats {

@@ -201,6 +201,36 @@ async def cancel_task(task_id: str):
     return {"ok": True}
 
 
+@app.post("/api/v1/findings/fix")
+async def generate_finding_fix(body: dict):
+    """Generate a code fix for a specific finding.
+
+    Request: { file, line, vulnerability, fix_suggestion, code_context }
+    Returns the LLM-generated fix with before/after code.
+    """
+    from .fix_generator import generate_fix
+
+    file_path = body.get("file", "")
+    line = body.get("line", 0)
+    vuln = body.get("vulnerability", "")
+
+    if not file_path or not vuln:
+        raise HTTPException(400, "file and vulnerability are required")
+
+    code_context = body.get("code_context", f"// File: {file_path}, Line: {line}")
+
+    fix = await asyncio.to_thread(
+        generate_fix,
+        file_path=file_path,
+        line_number=line,
+        vulnerability=vuln,
+        code_context=code_context,
+        fix_suggestion=body.get("fix_suggestion", ""),
+    )
+
+    return fix
+
+
 # ========================================
 # CodeScope Audit Endpoint
 # ========================================

@@ -11,13 +11,13 @@ import { startAudit, getTaskStatus, getStats, getHistory } from '../api';
 export type AppView = 'home' | 'scanning' | 'report';
 
 const DEFAULT_LAYERS: ScanLayer[] = [
-  { id: 1, name: 'SAST Analysis', description: 'Static application security testing', status: 'pending', findings: 0, duration: null },
-  { id: 2, name: 'Dependencies', description: 'Dependency vulnerability scan', status: 'pending', findings: 0, duration: null },
-  { id: 3, name: 'Secrets Detection', description: 'Hardcoded secrets and credentials', status: 'pending', findings: 0, duration: null },
-  { id: 4, name: 'License Compliance', description: 'License compatibility checks', status: 'pending', findings: 0, duration: null },
-  { id: 5, name: 'Test Coverage', description: 'Test suite analysis', status: 'pending', findings: 0, duration: null },
-  { id: 6, name: 'Repo Health', description: 'Repository hygiene checks', status: 'pending', findings: 0, duration: null },
-  { id: 7, name: 'AI Synthesis', description: 'AI-powered security analysis', status: 'pending', findings: 0, duration: null },
+  { id: 1, name: 'Understanding', description: 'LLM reads the project', status: 'pending', findings: 0, duration: null },
+  { id: 2, name: 'Setup', description: 'Installing and running', status: 'pending', findings: 0, duration: null },
+  { id: 3, name: 'Auth & Access', description: 'Authentication review', status: 'pending', findings: 0, duration: null },
+  { id: 4, name: 'Injection & Input', description: 'SQL/XSS/Command injection', status: 'pending', findings: 0, duration: null },
+  { id: 5, name: 'AI Security', description: 'Prompt injection, LLM misuse', status: 'pending', findings: 0, duration: null },
+  { id: 6, name: 'Secrets & Config', description: 'Hardcoded credentials', status: 'pending', findings: 0, duration: null },
+  { id: 7, name: 'Synthesis', description: 'Multi-model report', status: 'pending', findings: 0, duration: null },
 ];
 
 function generateMockFindings(_repoName: string): Finding[] {
@@ -302,13 +302,13 @@ function generateMockReport(repoUrl: string): AuditResult {
     status: 'completed',
     risk_score: 42,
     layers: [
-      { id: 1, name: 'SAST Analysis', description: 'Static application security testing', status: 'done', findings: 6, duration: 1.2 },
-      { id: 2, name: 'Dependencies', description: 'Dependency vulnerability scan', status: 'done', findings: 4, duration: 0.8 },
-      { id: 3, name: 'Secrets Detection', description: 'Hardcoded secrets and credentials', status: 'done', findings: 2, duration: 0.3 },
-      { id: 4, name: 'License Compliance', description: 'License compatibility checks', status: 'done', findings: 2, duration: 0.5 },
-      { id: 5, name: 'Test Coverage', description: 'Test suite analysis', status: 'done', findings: 2, duration: 0.4 },
-      { id: 6, name: 'Repo Health', description: 'Repository hygiene checks', status: 'done', findings: 6, duration: 0.2 },
-      { id: 7, name: 'AI Synthesis', description: 'AI-powered security analysis', status: 'done', findings: 3, duration: 8.3 },
+      { id: 1, name: 'Understanding', description: 'LLM reads the project', status: 'done', findings: 6, duration: 1.2 },
+      { id: 2, name: 'Setup', description: 'Installing and running', status: 'done', findings: 4, duration: 0.8 },
+      { id: 3, name: 'Auth & Access', description: 'Authentication review', status: 'done', findings: 2, duration: 0.3 },
+      { id: 4, name: 'Injection & Input', description: 'SQL/XSS/Command injection', status: 'done', findings: 2, duration: 0.5 },
+      { id: 5, name: 'AI Security', description: 'Prompt injection, LLM misuse', status: 'done', findings: 2, duration: 0.4 },
+      { id: 6, name: 'Secrets & Config', description: 'Hardcoded credentials', status: 'done', findings: 6, duration: 0.2 },
+      { id: 7, name: 'Synthesis', description: 'Multi-model report', status: 'done', findings: 3, duration: 8.3 },
     ],
     findings,
     summary: `Security audit of ${repoName} identified 25 findings across 7 analysis layers. 2 critical issues require immediate attention: a prompt injection vulnerability in the LLM integration and an SQL injection in the query builder. The repository also has 5 high-severity issues including hardcoded credentials and an insecure deserialization pattern. Overall risk score of 42/100 indicates moderate risk with actionable improvements.`,
@@ -460,91 +460,89 @@ export function useAudit() {
       setLoading(true);
       setRepoUrl(url);
 
+      // Try to start the audit via the real API
+      let taskId: string | null = null;
       try {
-        // Try real API first
         const response = await startAudit(url);
-        const taskId = response.task_id;
+        taskId = response.task_id;
+      } catch {
+        // API truly unreachable - fall back to simulation
+        setLoading(false);
+        simulateScan(url);
+        return;
+      }
 
-        setView('scanning');
-        setLayers(DEFAULT_LAYERS.map((l) => ({ ...l })));
+      // If we got a task_id, ALWAYS use the real polling path.
+      // Never fall back to simulation from here onward.
+      setLoading(false);
+      setView('scanning');
+      setLayers(DEFAULT_LAYERS.map((l) => ({ ...l })));
 
-        const startTime = Date.now();
-        timerRef.current = setInterval(() => {
-          setElapsed((Date.now() - startTime) / 1000);
-        }, 100);
+      const startTime = Date.now();
+      timerRef.current = setInterval(() => {
+        setElapsed((Date.now() - startTime) / 1000);
+      }, 100);
 
-        // No fake timers - layer status comes ONLY from real log data
-        // This variable exists only so the cleanup in the poll can reference it
-        const progressTimer: ReturnType<typeof setInterval> | undefined = undefined;
+      // Poll for status + logs every 3 seconds
+      const poll = setInterval(async () => {
+        try {
+          const raw = await fetch(`${import.meta.env.VITE_API_URL || 'https://ephemeral-ai-dgdbw.ondigitalocean.app'}/api/v1/tasks/${taskId}`);
+          const data = await raw.json();
 
-        // Poll for status + logs every 3 seconds
-        const poll = setInterval(async () => {
-          try {
-            const raw = await fetch(`${import.meta.env.VITE_API_URL || 'https://ephemeral-ai-dgdbw.ondigitalocean.app'}/api/v1/tasks/${taskId}`);
-            const data = await raw.json();
+          // Update logs from backend (the daemon forwards CodeScope output)
+          if (data.logs && data.logs.length > 0) {
+            setLogs(data.logs);
 
-            // Update logs from backend (the daemon forwards CodeScope output)
-            if (data.logs && data.logs.length > 0) {
-              setLogs(data.logs);
+            // Parse layer status from actual log lines
+            setLayers((prev) => {
+              const updated = prev.map((l) => ({ ...l }));
+              const layerDoneRe = /\[Layer (\d)\/7\].*?complete/i;
+              const layerStartRe = /\[Layer (\d)\/7\]/i;
 
-              // Parse layer status from actual log lines
-              setLayers((prev) => {
-                const updated = prev.map((l) => ({ ...l }));
-                const layerDoneRe = /\[Layer (\d)\/7\].*?complete/i;
-                const layerStartRe = /\[Layer (\d)\/7\]/i;
-
-                for (const line of data.logs) {
-                  const doneMatch = line.match(layerDoneRe);
-                  if (doneMatch) {
-                    const idx = parseInt(doneMatch[1]) - 1;
-                    if (idx >= 0 && idx < 7) {
-                      const findingsMatch = line.match(/(\d+)\s+findings?/i);
-                      updated[idx] = {
-                        ...updated[idx],
-                        status: 'done',
-                        findings: findingsMatch ? parseInt(findingsMatch[1]) : 0,
-                      };
-                    }
-                  }
-                  const startMatch = line.match(layerStartRe);
-                  if (startMatch && !doneMatch) {
-                    const idx = parseInt(startMatch[1]) - 1;
-                    if (idx >= 0 && idx < 7 && updated[idx].status === 'pending') {
-                      updated[idx] = { ...updated[idx], status: 'running' };
-                    }
+              for (const line of data.logs) {
+                const doneMatch = line.match(layerDoneRe);
+                if (doneMatch) {
+                  const idx = parseInt(doneMatch[1]) - 1;
+                  if (idx >= 0 && idx < 7) {
+                    const findingsMatch = line.match(/(\d+)\s+findings?/i);
+                    updated[idx] = {
+                      ...updated[idx],
+                      status: 'done',
+                      findings: findingsMatch ? parseInt(findingsMatch[1]) : 0,
+                    };
                   }
                 }
-                return updated;
-              });
-            }
-
-            if (data.status === 'completed') {
-              clearInterval(poll);
-              clearInterval(progressTimer);
-              if (timerRef.current) clearInterval(timerRef.current);
-              setLayers((prev) => prev.map((l) => ({ ...l, status: 'done' as const })));
-              setLogs((prev) => [...prev, '--- Audit complete. Loading report... ---']);
-              await new Promise((r) => setTimeout(r, 800));
-              const result = await getTaskStatus(taskId);
-              setResult(result);
-              setView('report');
-            } else if (data.status === 'failed') {
-              clearInterval(poll);
-              clearInterval(progressTimer);
-              if (timerRef.current) clearInterval(timerRef.current);
-              setError(data.error || 'Audit failed');
-              setView('home');
-            }
-          } catch {
-            // Continue polling
+                const startMatch = line.match(layerStartRe);
+                if (startMatch && !doneMatch) {
+                  const idx = parseInt(startMatch[1]) - 1;
+                  if (idx >= 0 && idx < 7 && updated[idx].status === 'pending') {
+                    updated[idx] = { ...updated[idx], status: 'running' };
+                  }
+                }
+              }
+              return updated;
+            });
           }
-        }, 3000);
-      } catch {
-        // API unavailable - simulate
-        simulateScan(url);
-      } finally {
-        setLoading(false);
-      }
+
+          if (data.status === 'completed') {
+            clearInterval(poll);
+            if (timerRef.current) clearInterval(timerRef.current);
+            setLayers((prev) => prev.map((l) => ({ ...l, status: 'done' as const })));
+            setLogs((prev) => [...prev, '--- Audit complete. Loading report... ---']);
+            await new Promise((r) => setTimeout(r, 800));
+            const result = await getTaskStatus(taskId!);
+            setResult(result);
+            setView('report');
+          } else if (data.status === 'failed') {
+            clearInterval(poll);
+            if (timerRef.current) clearInterval(timerRef.current);
+            setError(data.error || 'Audit failed');
+            setView('home');
+          }
+        } catch {
+          // Polling error - keep trying, do NOT fall back to simulation
+        }
+      }, 3000);
     },
     [cleanup, simulateScan]
   );
@@ -559,7 +557,19 @@ export function useAudit() {
     setLogs([]);
   }, [cleanup]);
 
-  const viewReport = useCallback((entry: AuditHistoryEntry) => {
+  const viewReport = useCallback(async (entry: AuditHistoryEntry) => {
+    // Try to fetch real report from the API first
+    try {
+      const report = await getTaskStatus(entry.task_id);
+      if (report.findings.length > 0) {
+        setResult(report);
+        setView('report');
+        return;
+      }
+    } catch {
+      // Fall through to mock if API fails
+    }
+    // Fallback to mock data only if real data unavailable
     const report = generateMockReport(`https://github.com/${entry.repo_name}`);
     report.task_id = entry.task_id;
     report.risk_score = entry.risk_score;

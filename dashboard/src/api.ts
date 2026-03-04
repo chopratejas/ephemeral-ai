@@ -77,7 +77,7 @@ export async function getTaskStatus(taskId: string): Promise<AuditResult> {
   let language = 'unknown';
   let layers: AuditResult['layers'] = [];
 
-  const layerNames = ['SAST Analysis', 'Dependencies', 'Secrets Detection', 'License Compliance', 'Test Coverage', 'Repo Health', 'AI Synthesis'];
+  const layerNames = ['Understanding', 'Setup', 'Auth & Access', 'Injection & Input', 'AI Security', 'Secrets & Config', 'Synthesis'];
 
   // Fetch the parsed report from the backend (extracts findings.json from tar)
   try {
@@ -210,13 +210,13 @@ export async function getTaskStatus(taskId: string): Promise<AuditResult> {
     status: 'completed',
     risk_score: riskScore || Math.min(findings.length * 3, 100),
     layers: layers.length > 0 ? layers : [
-      { id: 1, name: 'SAST Analysis', description: '', status: 'done', findings: findings.length, duration: null },
-      { id: 2, name: 'Dependencies', description: '', status: 'done', findings: 0, duration: null },
-      { id: 3, name: 'Secrets Detection', description: '', status: 'done', findings: 0, duration: null },
-      { id: 4, name: 'License Compliance', description: '', status: 'done', findings: 0, duration: null },
-      { id: 5, name: 'Test Coverage', description: '', status: 'done', findings: 0, duration: null },
-      { id: 6, name: 'Repo Health', description: '', status: 'done', findings: 0, duration: null },
-      { id: 7, name: 'AI Synthesis', description: '', status: 'done', findings: 0, duration: null },
+      { id: 1, name: 'Understanding', description: '', status: 'done', findings: findings.length, duration: null },
+      { id: 2, name: 'Setup', description: '', status: 'done', findings: 0, duration: null },
+      { id: 3, name: 'Auth & Access', description: '', status: 'done', findings: 0, duration: null },
+      { id: 4, name: 'Injection & Input', description: '', status: 'done', findings: 0, duration: null },
+      { id: 5, name: 'AI Security', description: '', status: 'done', findings: 0, duration: null },
+      { id: 6, name: 'Secrets & Config', description: '', status: 'done', findings: 0, duration: null },
+      { id: 7, name: 'Synthesis', description: '', status: 'done', findings: 0, duration: null },
     ],
     findings,
     summary,
@@ -256,6 +256,8 @@ export async function getHistory(): Promise<AuditHistoryEntry[]> {
       cost_usd: 0.009,
       completed_at: a.completed_at,
       status: 'completed' as const,
+      language: a.language || undefined,
+      framework: a.framework || undefined,
     }));
   } catch {
     return [];
