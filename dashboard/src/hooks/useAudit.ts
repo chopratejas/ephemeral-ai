@@ -484,9 +484,23 @@ export function useAudit() {
       }, 100);
 
       // Poll for status + logs every 3 seconds
+      let notFoundCount = 0;
       const poll = setInterval(async () => {
         try {
           const raw = await fetch(`${import.meta.env.VITE_API_URL || 'https://ephemeral-ai-dgdbw.ondigitalocean.app'}/api/v1/tasks/${taskId}`);
+
+          // Handle 404 (task lost due to server restart)
+          if (raw.status === 404) {
+            notFoundCount++;
+            if (notFoundCount >= 3) {
+              clearInterval(poll);
+              if (timerRef.current) clearInterval(timerRef.current);
+              setError('Task was lost (server restarted). Please try again.');
+              setView('home');
+              return;
+            }
+          }
+
           const data = await raw.json();
 
           // Update logs from backend (the daemon forwards CodeScope output)

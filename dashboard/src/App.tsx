@@ -52,8 +52,8 @@ export default function App() {
         <p className="font-mono" style={{ fontSize: '13px', color: '#52525b' }}>
           CodeScope by Ephemeral.ai
         </p>
-        <p className="font-mono" style={{ fontSize: '12px', color: '#52525b', marginTop: '4px' }}>
-          Your code is destroyed after every scan.
+        <p className="font-mono" style={{ fontSize: '12px', color: '#3f3f46', marginTop: '4px' }}>
+          Scans run in isolated VMs that are recycled after every audit.
         </p>
       </footer>
     </div>

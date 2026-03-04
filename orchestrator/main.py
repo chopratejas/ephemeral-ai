@@ -7,7 +7,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -691,21 +691,43 @@ async def _rediscover_warm_pool() -> None:
     we just need to know about them so we can route tasks to them.
     """
     try:
-        from .droplet_manager import list_ephemeral_droplets
+        from .droplet_manager import list_ephemeral_droplets, destroy_droplet
         droplets = await list_ephemeral_droplets()
+        added = 0
+        destroyed = 0
+
         for d in droplets:
             droplet_id = d["id"]
             name = d.get("name", "")
+            created_str = d.get("created_at", "")
+
+            # Check age - skip Droplets older than 50 minutes (daemon is dead)
+            try:
+                created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                age_minutes = (datetime.now(timezone.utc) - created).total_seconds() / 60
+            except Exception:
+                age_minutes = 999
+
+            if age_minutes > 50:
+                logger.warning(
+                    "Destroying stale Droplet %d (%s, age=%.0fm)",
+                    droplet_id, name, age_minutes,
+                )
+                try:
+                    await destroy_droplet(droplet_id)
+                    destroyed += 1
+                except Exception:
+                    pass
+                continue
+
             ip = ""
             for net in d.get("networks", {}).get("v4", []):
                 if net.get("type") == "public":
                     ip = net["ip_address"]
                     break
             size = d.get("size_slug", "s-1vcpu-1gb")
-            # Extract worker_id from name (format: worker-{id[:8]})
-            worker_id = name.replace("worker-", "") + "-rediscovered"
 
-            # Extract worker_id from tags
+            worker_id = name.replace("worker-", "") + "-rediscovered"
             for tag in d.get("tags", []):
                 if tag.startswith("worker-"):
                     worker_id = tag.replace("worker-", "")
@@ -716,15 +738,13 @@ async def _rediscover_warm_pool() -> None:
                 droplet_ip=ip,
                 size_slug=size,
             )
+            added += 1
             logger.info(
-                "Rediscovered Droplet %d (%s) ip=%s -> warm pool",
-                droplet_id, name, ip,
+                "Rediscovered Droplet %d (%s) ip=%s age=%.0fm -> warm pool",
+                droplet_id, name, ip, age_minutes,
             )
 
-        if droplets:
-            logger.info("Rediscovered %d Droplets into warm pool", len(droplets))
-        else:
-            logger.info("No existing Droplets found")
+        logger.info("Rediscovery: %d added to pool, %d stale destroyed", added, destroyed)
     except Exception as e:
         logger.error("Warm pool rediscovery failed: %s", e)
 
