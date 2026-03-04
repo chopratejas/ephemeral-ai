@@ -102,49 +102,83 @@ export default function Report({ result, onNewAudit }: ReportProps) {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-6 pt-12 pb-20 animate-fade-in">
+    <div className="max-w-5xl mx-auto px-6 animate-fade-in" style={{ paddingTop: '48px', paddingBottom: '80px' }}>
       {/* Header */}
-      <div className="flex items-start justify-between mb-8">
+      <div className="flex items-start justify-between mb-10">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h2 className="text-2xl font-semibold text-text-primary">Report</h2>
-            <span className="font-mono text-accent-purple text-sm">{result.repo_name}</span>
+          <div className="flex items-baseline gap-3 mb-2">
+            <h2
+              className="font-semibold"
+              style={{ fontSize: '24px', color: '#e4e4e7', letterSpacing: '-0.02em' }}
+            >
+              Report
+            </h2>
+            <span className="font-mono" style={{ fontSize: '16px', color: '#8b5cf6' }}>
+              {result.repo_name}
+            </span>
           </div>
-          <div className="flex items-center gap-3 text-xs font-mono text-text-secondary">
+          <div className="flex items-center gap-3 text-xs font-mono" style={{ color: '#71717a' }}>
             <span>branch: {result.branch}</span>
-            <span className="text-border">|</span>
+            <span style={{ color: '#1e1e2e' }}>|</span>
             <span>{result.language}</span>
-            <span className="text-border">|</span>
+            <span style={{ color: '#1e1e2e' }}>|</span>
             <span>{formatDuration(result.duration_seconds)}</span>
-            <span className="text-border">|</span>
-            <span className="text-accent-green">${result.cost_usd.toFixed(3)}</span>
+            <span style={{ color: '#1e1e2e' }}>|</span>
+            <span style={{ color: '#22c55e' }}>${result.cost_usd.toFixed(3)}</span>
           </div>
         </div>
         <button
           onClick={onNewAudit}
-          className="text-sm text-text-secondary hover:text-text-primary transition-colors font-mono px-3 py-1.5 border border-border rounded-lg hover:border-text-muted"
+          className="text-sm font-mono transition-colors"
+          style={{
+            color: '#71717a',
+            padding: '6px 16px',
+            border: '1px solid #1e1e2e',
+            borderRadius: '8px',
+            background: 'transparent',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#52525b';
+            e.currentTarget.style.color = '#e4e4e7';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = '#1e1e2e';
+            e.currentTarget.style.color = '#71717a';
+          }}
         >
           New Audit
         </button>
       </div>
 
       {/* Risk Score */}
-      <div className="border border-border rounded-lg bg-surface p-5 mb-6">
-        <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
+      <div
+        className="mb-8"
+        style={{
+          border: '1px solid #1e1e2e',
+          borderRadius: '12px',
+          background: '#12121a',
+          padding: '24px',
+        }}
+      >
+        <div
+          className="font-semibold uppercase tracking-wider mb-4"
+          style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
+        >
           Risk Score
         </div>
         <RiskScore score={result.risk_score} />
       </div>
 
       {/* Severity Counts */}
-      <div className="flex flex-wrap gap-3 mb-6">
+      <div className="flex flex-wrap gap-3 mb-8">
         {SEVERITY_ORDER.map((sev) => (
           <button
             key={sev}
             onClick={() => setActiveSeverity(activeSeverity === sev ? null : sev)}
-            className={`transition-opacity ${
-              activeSeverity && activeSeverity !== sev ? 'opacity-40' : ''
-            } hover:opacity-100`}
+            className="transition-opacity"
+            style={{
+              opacity: activeSeverity && activeSeverity !== sev ? 0.4 : 1,
+            }}
           >
             <SeverityCount severity={sev} count={severityCounts[sev]} />
           </button>
@@ -152,22 +186,37 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       </div>
 
       {/* AI Summary */}
-      <div className="border border-border rounded-lg bg-surface p-5 mb-6">
-        <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
-          AI Analysis Summary
+      <div
+        className="mb-8"
+        style={{
+          border: '1px solid #1e1e2e',
+          borderRadius: '12px',
+          background: '#12121a',
+          padding: '24px',
+        }}
+      >
+        <div
+          className="font-semibold uppercase tracking-wider mb-3"
+          style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
+        >
+          Analysis Summary
         </div>
-        <p className="text-sm text-text-secondary leading-relaxed">{result.summary}</p>
+        <p style={{ fontSize: '14px', color: '#71717a', lineHeight: 1.7 }}>{result.summary}</p>
       </div>
 
       {/* Category Filters */}
-      <div className="flex flex-wrap gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-5">
         <button
           onClick={() => setActiveCategory(null)}
-          className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
-            activeCategory === null
-              ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
-              : 'bg-surface border-border text-text-secondary hover:border-text-muted'
-          }`}
+          className="font-mono transition-colors"
+          style={{
+            padding: '4px 10px',
+            fontSize: '12px',
+            borderRadius: '6px',
+            border: `1px solid ${activeCategory === null ? 'rgba(139, 92, 246, 0.3)' : '#1e1e2e'}`,
+            background: activeCategory === null ? 'rgba(139, 92, 246, 0.08)' : '#12121a',
+            color: activeCategory === null ? '#8b5cf6' : '#71717a',
+          }}
         >
           All ({result.findings.length})
         </button>
@@ -177,11 +226,15 @@ export default function Report({ result, onNewAudit }: ReportProps) {
             <button
               key={cat}
               onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
-              className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
-                activeCategory === cat
-                  ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
-                  : 'bg-surface border-border text-text-secondary hover:border-text-muted'
-              }`}
+              className="font-mono transition-colors"
+              style={{
+                padding: '4px 10px',
+                fontSize: '12px',
+                borderRadius: '6px',
+                border: `1px solid ${activeCategory === cat ? 'rgba(139, 92, 246, 0.3)' : '#1e1e2e'}`,
+                background: activeCategory === cat ? 'rgba(139, 92, 246, 0.08)' : '#12121a',
+                color: activeCategory === cat ? '#8b5cf6' : '#71717a',
+              }}
             >
               {cat} ({count})
             </button>
@@ -190,38 +243,53 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       </div>
 
       {/* Findings */}
-      <div className="space-y-2 mb-8">
+      <div className="space-y-2 mb-10">
         {filteredFindings.map((finding) => (
           <FindingCard key={finding.id} finding={finding} />
         ))}
         {filteredFindings.length === 0 && (
-          <div className="text-center py-8 text-sm text-text-muted font-mono">
+          <div className="text-center font-mono" style={{ padding: '32px 0', fontSize: '14px', color: '#52525b' }}>
             No findings match the selected filters.
           </div>
         )}
       </div>
 
       {/* Scan Layers Summary */}
-      <div className="border border-border rounded-lg bg-surface overflow-hidden mb-8">
-        <div className="px-4 py-3 border-b border-border">
-          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+      <div
+        className="mb-10 overflow-hidden"
+        style={{
+          border: '1px solid #1e1e2e',
+          borderRadius: '12px',
+          background: '#12121a',
+        }}
+      >
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e1e2e' }}>
+          <span
+            className="font-semibold uppercase tracking-wider"
+            style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
+          >
             Scan Layers
           </span>
         </div>
         {result.layers.map((layer, idx) => (
           <div
             key={layer.id}
-            className={`flex items-center gap-3 px-4 py-2.5 text-sm ${
-              idx < result.layers.length - 1 ? 'border-b border-border' : ''
-            }`}
+            className="flex items-center gap-3 text-sm"
+            style={{
+              padding: '10px 16px',
+              borderBottom: idx < result.layers.length - 1 ? '1px solid #1e1e2e' : 'none',
+            }}
           >
-            <span className="text-accent-green text-xs">&#9679;</span>
-            <span className="text-xs font-mono text-text-muted w-4">{layer.id}</span>
-            <span className="flex-1 text-text-primary text-sm">{layer.name}</span>
-            <span className="text-xs font-mono text-text-secondary">
+            <span
+              className="inline-block rounded-full"
+              style={{ width: '6px', height: '6px', background: '#22c55e' }}
+            />
+            <span className="font-mono" style={{ width: '16px', fontSize: '12px', color: '#52525b' }}>{layer.id}</span>
+            <span className="flex-1" style={{ fontSize: '14px', color: '#e4e4e7' }}>{layer.name}</span>
+            <span className="font-mono" style={{ fontSize: '12px', color: '#71717a' }}>
               {layer.findings} findings
             </span>
-            <span className="text-xs font-mono text-text-muted w-12 text-right">
+            <span className="font-mono" style={{ width: '48px', textAlign: 'right', fontSize: '12px', color: '#52525b' }}>
               {layer.duration?.toFixed(1)}s
             </span>
           </div>
@@ -232,14 +300,46 @@ export default function Report({ result, onNewAudit }: ReportProps) {
       <div className="flex flex-wrap gap-3">
         <button
           onClick={downloadMarkdown}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-mono text-text-secondary bg-surface border border-border rounded-lg hover:border-text-muted hover:text-text-primary transition-colors"
+          className="flex items-center gap-2 font-mono transition-colors"
+          style={{
+            padding: '8px 16px',
+            fontSize: '13px',
+            color: '#71717a',
+            background: '#12121a',
+            border: '1px solid #1e1e2e',
+            borderRadius: '8px',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#52525b';
+            e.currentTarget.style.color = '#e4e4e7';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = '#1e1e2e';
+            e.currentTarget.style.color = '#71717a';
+          }}
         >
           <DownloadIcon />
           Download Report
         </button>
         <button
           onClick={downloadJSON}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-mono text-text-secondary bg-surface border border-border rounded-lg hover:border-text-muted hover:text-text-primary transition-colors"
+          className="flex items-center gap-2 font-mono transition-colors"
+          style={{
+            padding: '8px 16px',
+            fontSize: '13px',
+            color: '#71717a',
+            background: '#12121a',
+            border: '1px solid #1e1e2e',
+            borderRadius: '8px',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#52525b';
+            e.currentTarget.style.color = '#e4e4e7';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = '#1e1e2e';
+            e.currentTarget.style.color = '#71717a';
+          }}
         >
           <DownloadIcon />
           Download JSON

@@ -1,15 +1,13 @@
-import type { PlatformStats } from '../types';
-
 interface HeaderProps {
-  stats: PlatformStats;
+  stats?: unknown;
   onLogoClick: () => void;
 }
 
 function ShieldIcon() {
   return (
     <svg
-      width="24"
-      height="24"
+      width="20"
+      height="20"
       viewBox="0 0 32 32"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
@@ -33,40 +31,46 @@ function ShieldIcon() {
   );
 }
 
-export default function Header({ stats, onLogoClick }: HeaderProps) {
+export default function Header({ onLogoClick }: HeaderProps) {
   return (
-    <header className="border-b border-border bg-surface/50 backdrop-blur-sm sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+    <header
+      className="sticky top-0 z-50"
+      style={{
+        borderBottom: '1px solid rgba(30, 30, 46, 0.5)',
+        background: 'rgba(10, 10, 15, 0.8)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+      }}
+    >
+      <div className="max-w-7xl mx-auto px-6 flex items-center justify-between" style={{ height: '56px' }}>
         <button
           onClick={onLogoClick}
           className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
         >
           <ShieldIcon />
-          <span className="text-text-primary font-semibold text-[15px] tracking-tight">
+          <span
+            className="font-semibold tracking-tight"
+            style={{ fontSize: '15px', color: '#e4e4e7' }}
+          >
             CodeScope
-          </span>
-          <span className="text-text-muted text-xs font-normal hidden sm:inline">
-            / ephemeral.ai
           </span>
         </button>
 
-        <div className="flex items-center gap-6 text-xs font-mono text-text-secondary">
-          <div className="hidden md:flex items-center gap-1.5">
-            <span className="text-text-muted">scanned</span>
-            <span className="text-text-primary">{(stats?.total_tasks ?? 0)}</span>
-          </div>
-          <div className="hidden md:flex items-center gap-1.5">
-            <span className="text-text-muted">patterns</span>
-            <span className="text-text-primary">48+</span>
-          </div>
-          <div className="hidden sm:flex items-center gap-1.5">
-            <span className="text-text-muted">models</span>
-            <span className="text-accent-purple">3</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent-green" />
-            <span className="text-text-muted">operational</span>
-          </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className="rounded-full"
+            style={{
+              width: '6px',
+              height: '6px',
+              background: '#22c55e',
+            }}
+          />
+          <span
+            className="font-mono"
+            style={{ fontSize: '12px', color: '#52525b' }}
+          >
+            operational
+          </span>
         </div>
       </div>
     </header>

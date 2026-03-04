@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
 import type { PlatformStats } from '../types';
-import StatsBar from './StatsBar';
 
 interface AuditFormProps {
   onSubmit: (url: string) => void;
@@ -8,16 +7,6 @@ interface AuditFormProps {
   error: string | null;
   stats: PlatformStats;
 }
-
-const SCAN_CAPABILITIES = [
-  'OWASP Top 10',
-  'AI Code Patterns',
-  'Prompt Injection',
-  'Supply Chain',
-  'Secrets',
-  'License Compliance',
-  'Dependency CVEs',
-];
 
 function ArrowIcon() {
   return (
@@ -47,104 +36,187 @@ export default function AuditForm({ onSubmit, loading, error, stats }: AuditForm
   };
 
   return (
-    <div className="animate-fade-in">
-      <div className="max-w-5xl mx-auto px-6 pt-24 pb-16">
-        {/* Hero text */}
-        <div className="mb-10">
-          <h1 className="text-3xl sm:text-5xl font-bold text-text-primary tracking-tight mb-3">
+    <div>
+      {/* ─── Hero Section ─── */}
+      <section className="max-w-3xl mx-auto px-6 pt-[120px] pb-[80px]">
+        <div className="stagger">
+          {/* Headline */}
+          <h1
+            className="animate-fade-up"
+            style={{
+              fontSize: 'clamp(2.5rem, 5vw, 3.5rem)',
+              fontWeight: 700,
+              letterSpacing: '-0.03em',
+              lineHeight: 1.1,
+              color: '#e4e4e7',
+            }}
+          >
             Find vulnerabilities
             <br />
-            <span className="text-accent-purple">before they find you.</span>
+            before they find you.
           </h1>
-          <p className="text-lg text-text-secondary leading-relaxed max-w-xl">
+
+          {/* Subtitle */}
+          <p
+            className="animate-fade-up delay-100 mt-6 max-w-lg"
+            style={{
+              fontSize: '1.125rem',
+              lineHeight: 1.7,
+              color: '#71717a',
+            }}
+          >
             Paste any GitHub repo. 7 security layers. 3 AI models.
-            48+ vulnerability patterns including AI-generated code flaws.
             Your code is destroyed after every scan.
           </p>
-        </div>
 
-        {/* Audit input */}
-        <form onSubmit={handleSubmit} className="mb-6">
-          <div className="flex gap-3">
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://github.com/owner/repo"
-                spellCheck={false}
-                autoFocus
-                className="w-full h-12 px-4 bg-surface border border-border rounded-lg text-sm font-mono text-text-primary placeholder:text-text-muted focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-colors"
-              />
+          {/* Input + Button */}
+          <form onSubmit={handleSubmit} className="animate-fade-up delay-200 mt-10">
+            <div className="flex gap-3">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="github.com/owner/repo"
+                  spellCheck={false}
+                  autoFocus
+                  className="w-full font-mono text-text-primary placeholder:text-text-muted transition-all duration-200"
+                  style={{
+                    height: '56px',
+                    fontSize: '15px',
+                    background: '#12121a',
+                    border: '1px solid #1e1e2e',
+                    borderRadius: '12px',
+                    padding: '0 20px',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = '#8b5cf6';
+                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(139, 92, 246, 0.1)';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = '#1e1e2e';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading || !url.trim()}
+                className="shrink-0 text-white font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 active:scale-[0.98]"
+                style={{
+                  height: '56px',
+                  padding: '0 32px',
+                  background: '#8b5cf6',
+                  borderRadius: '12px',
+                  fontSize: '15px',
+                  border: 'none',
+                  cursor: loading || !url.trim() ? 'not-allowed' : 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading && url.trim()) {
+                    e.currentTarget.style.background = '#7c3aed';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = '#8b5cf6';
+                }}
+              >
+                <span>Audit</span>
+                <ArrowIcon />
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={loading || !url.trim()}
-              className="h-12 px-6 bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shrink-0"
-            >
-              <span>Audit</span>
-              <ArrowIcon />
-            </button>
-          </div>
-        </form>
+          </form>
 
-        {/* Error */}
-        {error && (
-          <div className="mb-6 px-4 py-3 bg-accent-red/10 border border-accent-red/20 rounded-lg text-sm text-accent-red font-mono">
-            {error}
-          </div>
-        )}
-
-        {/* Scan capabilities */}
-        <div className="flex flex-wrap gap-2 mb-10">
-          {SCAN_CAPABILITIES.map((cap) => (
-            <span
-              key={cap}
-              className="px-2.5 py-1 bg-surface border border-border rounded text-xs font-mono text-text-secondary"
+          {/* Error */}
+          {error && (
+            <div
+              className="animate-fade-up mt-4 px-4 py-3 text-sm font-mono"
+              style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.15)',
+                borderRadius: '12px',
+                color: '#ef4444',
+              }}
             >
-              {cap}
+              {error}
+            </div>
+          )}
+
+          {/* Stats line */}
+          <div
+            className="animate-fade-up delay-300 mt-8 flex items-center gap-2 font-mono"
+            style={{ fontSize: '14px', color: '#52525b' }}
+          >
+            <span>
+              <span style={{ color: '#71717a' }}>{stats?.total_tasks ?? 0}</span> repos scanned
             </span>
-          ))}
+            <span style={{ color: '#1e1e2e' }}>&middot;</span>
+            <span>48+ checks</span>
+            <span style={{ color: '#1e1e2e' }}>&middot;</span>
+            <span>3 AI models</span>
+          </div>
         </div>
+      </section>
 
-        {/* Cost line */}
-        <p className="text-sm text-text-muted mb-8 font-mono">
-          $0.01 per audit &middot; Code destroyed after scan &middot; No data retained
-        </p>
-
-        {/* Platform stats */}
-        <StatsBar stats={stats} />
-      </div>
-
-      {/* Architecture diagram */}
-      <div className="max-w-5xl mx-auto px-6 pb-20">
-        <div className="border border-border rounded-lg p-6 bg-surface/50">
-          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-4">
+      {/* ─── How It Works ─── */}
+      <section className="max-w-3xl mx-auto px-6 pb-[120px]">
+        <div className="animate-slide-up delay-400">
+          <h2
+            className="mb-10 font-semibold"
+            style={{
+              fontSize: '13px',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase' as const,
+              color: '#52525b',
+            }}
+          >
             How it works
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-center">
+          </h2>
+
+          <div className="space-y-8">
             {[
-              { step: '01', label: 'Provision', desc: 'Ephemeral droplet from warm pool' },
-              { step: '02', label: 'Clone', desc: 'Shallow clone into isolated VM' },
-              { step: '03', label: 'Scan', desc: '7 security layers in parallel' },
-              { step: '04', label: 'Destroy', desc: 'Droplet terminated, data erased' },
-            ].map((item, i) => (
-              <div key={item.step} className="flex sm:flex-col items-center sm:items-center gap-3 sm:gap-2">
-                <div className="flex items-center gap-3 sm:flex-col sm:gap-2">
-                  <span className="text-xs font-mono text-accent-purple">{item.step}</span>
-                  <span className="text-sm font-medium text-text-primary">{item.label}</span>
+              {
+                step: '01',
+                title: 'Paste a GitHub URL',
+                desc: 'Any public repository. We support Python, JavaScript, TypeScript, Go, Rust, and more.',
+              },
+              {
+                step: '02',
+                title: 'We clone, install, and run your code in an isolated VM',
+                desc: 'An ephemeral droplet spins up in under 2 seconds. Full environment: dependencies, runtime, everything.',
+              },
+              {
+                step: '03',
+                title: '7 parallel security layers find real vulnerabilities',
+                desc: 'SAST, SCA, secrets detection, license compliance, AI code safety, supply chain analysis, and multi-model synthesis with exploit scenarios.',
+              },
+            ].map((item) => (
+              <div key={item.step} className="flex gap-6">
+                <span
+                  className="shrink-0 font-mono"
+                  style={{ fontSize: '13px', color: '#8b5cf6', paddingTop: '2px' }}
+                >
+                  {item.step}
+                </span>
+                <div>
+                  <p
+                    className="font-medium"
+                    style={{ fontSize: '16px', color: '#e4e4e7', lineHeight: 1.5 }}
+                  >
+                    {item.title}
+                  </p>
+                  <p
+                    className="mt-1"
+                    style={{ fontSize: '14px', color: '#52525b', lineHeight: 1.6 }}
+                  >
+                    {item.desc}
+                  </p>
                 </div>
-                <span className="text-sm text-text-muted leading-tight hidden sm:block">{item.desc}</span>
-                {i < 3 && (
-                  <span className="text-text-muted text-xs hidden sm:block absolute-none">
-                    {/* Arrow rendered via layout */}
-                  </span>
-                )}
               </div>
             ))}
           </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

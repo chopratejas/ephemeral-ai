@@ -11,13 +11,33 @@ interface LiveAuditProps {
 function StatusIcon({ status }: { status: ScanLayer['status'] }) {
   switch (status) {
     case 'pending':
-      return <span className="text-text-muted text-base leading-none">&#9675;</span>;
+      return (
+        <span
+          className="inline-block rounded-full"
+          style={{ width: '8px', height: '8px', background: '#52525b' }}
+        />
+      );
     case 'running':
-      return <span className="text-accent-purple text-base leading-none animate-pulse-dot">&#9673;</span>;
+      return (
+        <span
+          className="inline-block rounded-full animate-pulse-dot"
+          style={{ width: '8px', height: '8px', background: '#8b5cf6' }}
+        />
+      );
     case 'done':
-      return <span className="text-accent-green text-base leading-none">&#9679;</span>;
+      return (
+        <span
+          className="inline-block rounded-full"
+          style={{ width: '8px', height: '8px', background: '#22c55e' }}
+        />
+      );
     case 'error':
-      return <span className="text-accent-red text-base leading-none">&#10005;</span>;
+      return (
+        <span
+          className="inline-block rounded-full"
+          style={{ width: '8px', height: '8px', background: '#ef4444' }}
+        />
+      );
     default:
       return null;
   }
@@ -39,73 +59,107 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
   }, [logs]);
 
   return (
-    <div className="max-w-5xl mx-auto px-6 pt-12 pb-20 animate-fade-in">
+    <div className="max-w-5xl mx-auto px-6 animate-fade-in" style={{ paddingTop: '64px', paddingBottom: '80px' }}>
       {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <h2 className="text-xl font-semibold text-text-primary">Auditing</h2>
-          <span className="font-mono text-accent-purple">{repoName}</span>
+      <div className="mb-8">
+        <div className="flex items-baseline gap-3 mb-3">
+          <h2
+            className="font-semibold"
+            style={{ fontSize: '24px', color: '#e4e4e7', letterSpacing: '-0.02em' }}
+          >
+            Auditing
+          </h2>
+          <span
+            className="font-mono"
+            style={{ fontSize: '18px', color: '#8b5cf6' }}
+          >
+            {repoName}
+          </span>
         </div>
-        <div className="flex items-center gap-3 text-sm font-mono text-text-secondary">
+        <div className="flex items-center gap-3 text-sm font-mono" style={{ color: '#71717a' }}>
           <span>branch: main</span>
-          <span className="text-border">|</span>
+          <span style={{ color: '#1e1e2e' }}>|</span>
           <span className="flex items-center gap-1.5">
             droplet:
-            <span className={`w-2 h-2 rounded-full ${isRunning ? 'bg-accent-green' : 'bg-text-muted'}`} />
-            <span className={isRunning ? 'text-accent-green' : ''}>
+            <span
+              className="inline-block rounded-full"
+              style={{
+                width: '6px',
+                height: '6px',
+                background: isRunning ? '#22c55e' : '#52525b',
+              }}
+            />
+            <span style={{ color: isRunning ? '#22c55e' : '#71717a' }}>
               {isRunning ? 'active' : 'booting...'}
             </span>
           </span>
-          <span className="text-border">|</span>
-          <span>elapsed: <span className="text-text-primary">{elapsed.toFixed(1)}s</span></span>
+          <span style={{ color: '#1e1e2e' }}>|</span>
+          <span>
+            elapsed: <span style={{ color: '#e4e4e7' }}>{elapsed.toFixed(1)}s</span>
+          </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Left: Layers */}
         <div>
           {/* Progress bar */}
-          <div className="mb-4">
-            <div className="h-1.5 bg-border rounded-full overflow-hidden">
+          <div className="mb-5">
+            <div className="overflow-hidden" style={{ height: '4px', background: '#1e1e2e', borderRadius: '2px' }}>
               <div
-                className="h-full bg-accent-purple rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${(completedLayers / layers.length) * 100}%` }}
+                className="transition-all duration-500 ease-out"
+                style={{
+                  height: '100%',
+                  width: `${(completedLayers / layers.length) * 100}%`,
+                  background: '#8b5cf6',
+                  borderRadius: '2px',
+                }}
               />
             </div>
           </div>
 
-          <div className="border border-border rounded-lg bg-surface overflow-hidden">
+          <div
+            className="overflow-hidden"
+            style={{
+              border: '1px solid #1e1e2e',
+              borderRadius: '12px',
+              background: '#12121a',
+            }}
+          >
             {layers.map((layer, idx) => (
               <div
                 key={layer.id}
-                className={`flex items-center gap-3 px-4 py-3.5 ${
-                  idx < layers.length - 1 ? 'border-b border-border' : ''
-                } ${layer.status === 'running' ? 'bg-accent-purple/5' : ''}`}
+                className="flex items-center gap-3 transition-colors"
+                style={{
+                  padding: '14px 16px',
+                  borderBottom: idx < layers.length - 1 ? '1px solid #1e1e2e' : 'none',
+                  background: layer.status === 'running' ? 'rgba(139, 92, 246, 0.04)' : 'transparent',
+                }}
               >
                 <StatusIcon status={layer.status} />
 
-                <span className="text-sm font-mono text-text-muted w-6 shrink-0">
+                <span className="text-sm font-mono shrink-0" style={{ width: '20px', color: '#52525b' }}>
                   {layer.id}
                 </span>
 
                 <span
-                  className={`flex-1 ${
-                    layer.status === 'done'
-                      ? 'text-text-primary'
-                      : layer.status === 'running'
-                        ? 'text-text-primary'
-                        : 'text-text-muted'
-                  }`}
+                  className="flex-1"
+                  style={{
+                    fontSize: '14px',
+                    color: layer.status === 'pending' ? '#52525b' : '#e4e4e7',
+                  }}
                 >
                   {layer.name}
                 </span>
 
-                <span className="text-sm font-mono text-text-secondary w-28 text-right">
+                <span className="text-sm font-mono" style={{ width: '110px', textAlign: 'right' }}>
                   {layer.status === 'done' && (
-                    <>{layer.findings} {layer.findings === 1 ? 'finding' : 'findings'}</>
+                    <span style={{ color: '#71717a' }}>
+                      {layer.findings} {layer.findings === 1 ? 'finding' : 'findings'}
+                    </span>
                   )}
                   {layer.status === 'running' && (
-                    <span className="text-accent-purple">analyzing...</span>
+                    <span style={{ color: '#8b5cf6' }}>analyzing...</span>
                   )}
                 </span>
               </div>
@@ -115,14 +169,27 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
 
         {/* Right: Live Log Stream */}
         <div>
-          <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
+          <div
+            className="font-semibold uppercase tracking-wider mb-3"
+            style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
+          >
             Live Output
           </div>
-          <div className="border border-border rounded-lg bg-[#08080d] overflow-hidden">
-            <div className="h-[340px] overflow-y-auto p-4 font-mono text-sm leading-relaxed">
+          <div
+            className="overflow-hidden"
+            style={{
+              border: '1px solid #1e1e2e',
+              borderRadius: '12px',
+              background: '#08080d',
+            }}
+          >
+            <div
+              className="overflow-y-auto p-5 font-mono text-sm leading-relaxed"
+              style={{ height: '400px' }}
+            >
               {logs.length === 0 && (
-                <div className="text-text-muted">
-                  Waiting for Droplet to boot and start scanning...
+                <div style={{ color: '#52525b' }}>
+                  Waiting for droplet to boot and start scanning...
                 </div>
               )}
               {logs.map((line, i) => {
@@ -131,14 +198,14 @@ export default function LiveAudit({ repoUrl, layers, elapsed, logs }: LiveAuditP
                 const isError = line.includes('ERROR') || line.includes('error');
                 const isFindings = line.includes('findings');
 
-                let color = 'text-text-muted';
-                if (isLayer) color = 'text-accent-purple';
-                if (isComplete) color = 'text-accent-green';
-                if (isError) color = 'text-accent-red';
-                if (isFindings) color = 'text-text-primary';
+                let color = '#52525b';
+                if (isLayer) color = '#8b5cf6';
+                if (isComplete) color = '#22c55e';
+                if (isError) color = '#ef4444';
+                if (isFindings) color = '#e4e4e7';
 
                 return (
-                  <div key={i} className={`${color} py-0.5`}>
+                  <div key={i} style={{ color, padding: '2px 0' }}>
                     {line}
                   </div>
                 );

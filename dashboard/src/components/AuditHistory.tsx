@@ -24,11 +24,11 @@ function timeAgo(dateStr: string): string {
 }
 
 function riskColor(score: number): string {
-  if (score >= 70) return 'text-accent-red';
-  if (score >= 50) return 'text-accent-orange';
-  if (score >= 30) return 'text-yellow-400';
-  if (score >= 15) return 'text-accent-blue';
-  return 'text-accent-green';
+  if (score >= 70) return '#ef4444';
+  if (score >= 50) return '#f59e0b';
+  if (score >= 30) return '#eab308';
+  if (score >= 15) return '#3b82f6';
+  return '#22c55e';
 }
 
 export default function AuditHistory({ history, onSelect }: AuditHistoryProps) {
@@ -45,27 +45,44 @@ export default function AuditHistory({ history, onSelect }: AuditHistoryProps) {
   const gridCols = baseCols + langCol + fwCol + endCols;
 
   return (
-    <div className="max-w-5xl mx-auto px-6 pb-20">
-      <div className="border border-border rounded-lg bg-surface overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-            Global Audit Feed
+    <div className="max-w-3xl mx-auto px-6 pb-20">
+      <div
+        className="overflow-hidden"
+        style={{
+          border: '1px solid #1e1e2e',
+          borderRadius: '12px',
+          background: '#12121a',
+        }}
+      >
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e1e2e' }}>
+          <span
+            className="font-semibold uppercase tracking-wider"
+            style={{ fontSize: '11px', color: '#71717a', letterSpacing: '0.08em' }}
+          >
+            Recent Audits
           </span>
         </div>
 
         {/* Table header */}
         <div
-          className="hidden sm:grid gap-2 px-4 py-2 border-b border-border text-xs font-mono text-text-muted uppercase tracking-wider"
-          style={{ gridTemplateColumns: gridCols }}
+          className="hidden sm:grid gap-2 font-mono uppercase tracking-wider"
+          style={{
+            gridTemplateColumns: gridCols,
+            padding: '8px 16px',
+            borderBottom: '1px solid #1e1e2e',
+            fontSize: '10px',
+            color: '#52525b',
+            letterSpacing: '0.06em',
+          }}
         >
           <span>Repository</span>
-          <span className="text-right">Risk</span>
-          <span className="text-right">Findings</span>
-          {hasLanguage && <span className="text-right">Lang</span>}
-          {hasFramework && <span className="text-right">Framework</span>}
-          <span className="text-right">Duration</span>
-          <span className="text-right">Cost</span>
-          <span className="text-right">When</span>
+          <span style={{ textAlign: 'right' }}>Risk</span>
+          <span style={{ textAlign: 'right' }}>Findings</span>
+          {hasLanguage && <span style={{ textAlign: 'right' }}>Lang</span>}
+          {hasFramework && <span style={{ textAlign: 'right' }}>Framework</span>}
+          <span style={{ textAlign: 'right' }}>Duration</span>
+          <span style={{ textAlign: 'right' }}>Cost</span>
+          <span style={{ textAlign: 'right' }}>When</span>
         </div>
 
         {/* Rows */}
@@ -73,58 +90,65 @@ export default function AuditHistory({ history, onSelect }: AuditHistoryProps) {
           <button
             key={entry.task_id}
             onClick={() => onSelect(entry)}
-            className={`w-full text-left hover:bg-surface-hover transition-colors ${
-              idx < history.length - 1 ? 'border-b border-border' : ''
-            }`}
+            className="w-full text-left transition-colors hover:bg-surface-hover"
+            style={{
+              borderBottom: idx < history.length - 1 ? '1px solid #1e1e2e' : 'none',
+            }}
           >
             {/* Desktop row */}
             <div
-              className="hidden sm:grid gap-2 items-center px-4 py-2.5"
-              style={{ gridTemplateColumns: gridCols }}
+              className="hidden sm:grid gap-2 items-center"
+              style={{ gridTemplateColumns: gridCols, padding: '10px 16px' }}
             >
-              <span className="text-sm font-mono text-text-primary truncate">
+              <span className="text-sm font-mono truncate" style={{ color: '#e4e4e7' }}>
                 {entry.repo_name}
               </span>
-              <span className={`text-xs font-mono text-right font-semibold ${riskColor(entry.risk_score)}`}>
+              <span
+                className="text-xs font-mono font-semibold"
+                style={{ textAlign: 'right', color: riskColor(entry.risk_score) }}
+              >
                 {entry.risk_score}
               </span>
-              <span className="text-xs font-mono text-text-secondary text-right">
+              <span className="text-xs font-mono" style={{ textAlign: 'right', color: '#71717a' }}>
                 {entry.total_findings}
               </span>
               {hasLanguage && (
-                <span className="text-xs font-mono text-text-muted text-right truncate">
+                <span className="text-xs font-mono truncate" style={{ textAlign: 'right', color: '#52525b' }}>
                   {entry.language || '--'}
                 </span>
               )}
               {hasFramework && (
-                <span className="text-xs font-mono text-text-muted text-right truncate">
+                <span className="text-xs font-mono truncate" style={{ textAlign: 'right', color: '#52525b' }}>
                   {entry.framework || '--'}
                 </span>
               )}
-              <span className="text-xs font-mono text-text-muted text-right">
+              <span className="text-xs font-mono" style={{ textAlign: 'right', color: '#52525b' }}>
                 {entry.duration_seconds.toFixed(1)}s
               </span>
-              <span className="text-xs font-mono text-accent-green text-right">
+              <span className="text-xs font-mono" style={{ textAlign: 'right', color: '#22c55e' }}>
                 ${entry.cost_usd.toFixed(3)}
               </span>
-              <span className="text-xs font-mono text-text-muted text-right">
+              <span className="text-xs font-mono" style={{ textAlign: 'right', color: '#52525b' }}>
                 {timeAgo(entry.completed_at)}
               </span>
             </div>
             {/* Mobile row */}
-            <div className="sm:hidden px-4 py-3">
+            <div className="sm:hidden" style={{ padding: '12px 16px' }}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-mono text-text-primary truncate">{entry.repo_name}</span>
-                <span className={`text-xs font-mono font-semibold ${riskColor(entry.risk_score)}`}>
+                <span className="text-sm font-mono truncate" style={{ color: '#e4e4e7' }}>{entry.repo_name}</span>
+                <span
+                  className="text-xs font-mono font-semibold"
+                  style={{ color: riskColor(entry.risk_score) }}
+                >
                   {entry.risk_score}
                 </span>
               </div>
-              <div className="flex items-center gap-3 text-xs font-mono text-text-muted flex-wrap">
+              <div className="flex items-center gap-3 text-xs font-mono flex-wrap" style={{ color: '#52525b' }}>
                 <span>{entry.total_findings} findings</span>
                 {entry.language && <span>{entry.language}</span>}
                 {entry.framework && <span>{entry.framework}</span>}
                 <span>{entry.duration_seconds.toFixed(1)}s</span>
-                <span className="text-accent-green">${entry.cost_usd.toFixed(3)}</span>
+                <span style={{ color: '#22c55e' }}>${entry.cost_usd.toFixed(3)}</span>
                 <span>{timeAgo(entry.completed_at)}</span>
               </div>
             </div>

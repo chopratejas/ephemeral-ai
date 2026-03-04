@@ -48,11 +48,13 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-border py-6 mt-8">
-        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between text-xs font-mono text-text-muted">
-          <span>CodeScope / Ephemeral.ai</span>
-          <span>Infrastructure destroyed after every scan</span>
-        </div>
+      <footer style={{ padding: '48px 0', textAlign: 'center' }}>
+        <p className="font-mono" style={{ fontSize: '13px', color: '#52525b' }}>
+          CodeScope by Ephemeral.ai
+        </p>
+        <p className="font-mono" style={{ fontSize: '12px', color: '#52525b', marginTop: '4px' }}>
+          Your code is destroyed after every scan.
+        </p>
       </footer>
     </div>
   );
