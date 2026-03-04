@@ -1,132 +1,99 @@
-# CodeScope by Ephemeral.ai
+# CodeScope
 
-**AI-Era Security Auditing -- 7 layers, 40+ checks, $0.01 per audit**
+LLM-first security auditing. Paste a GitHub repo, get real vulnerabilities with exploit scenarios and code fixes.
 
-> Built for the 45% -- because AI writes fast but doesn't write safe.
-
-[Live Demo](https://ephemeral-ai-dgdbw.ondigitalocean.app) | [API Docs](https://ephemeral-ai-dgdbw.ondigitalocean.app/docs) | [Hackathon: DigitalOcean Gradient AI](https://dograduation.devpost.com/)
+**Live**: [codescope.ephemeral.ai](https://ephemeral-ai.sfo3.digitaloceanspaces.com/dashboard/index.html) | **API**: [docs](https://ephemeral-ai-dgdbw.ondigitalocean.app/docs)
 
 ---
 
-## The Problem
+## What it does
 
-45% of AI-generated code contains security vulnerabilities (Veracode, 2025). Existing scanners like Snyk, CodeQL, and Semgrep were designed for human-written code patterns and miss AI-specific failure modes: hallucinated dependencies, missing input validation, prompt injection vectors, and tutorial-quality code shipped to production. Teams adopting AI coding assistants have no tool purpose-built to catch what those assistants get wrong.
+You paste a GitHub URL. CodeScope clones the repo into an ephemeral VM, installs it, tries to run it, and has 6 parallel LLM security reviewers analyze the code. Findings come with exploit scenarios and code fixes. The VM is recycled after every scan.
 
-## The Solution
+No regex. No pattern matching. The LLM reads your actual code and understands it.
 
-CodeScope clones any GitHub repository into an ephemeral DigitalOcean Droplet, runs a 7-layer security audit (OWASP Top 10, AI-specific patterns, supply chain, secrets, licensing, tests, repo health), then uses Gradient AI (Llama 3.3 70B) to synthesize findings into a prioritized, actionable report. The Droplet is destroyed after -- your code never persists.
+## How it works
 
----
+```mermaid
+flowchart TB
+    A[User pastes GitHub URL] --> B[Scout]
+    B -->|"Reads README via GitHub API<br/>LLM sizes the Droplet"| C{Warm pool?}
+    C -->|Yes| D[Route to idle Droplet<br/>0s provisioning]
+    C -->|No| E[Create new Droplet<br/>~30s from snapshot]
+    D --> F[CodeScope v3]
+    E --> F
 
-## Architecture
+    F --> G["Phase 1: Understand<br/>LLM reads file tree + docs"]
+    G --> H["Phase 2: Setup<br/>pip install, npm install, start app"]
+    H --> I["Phase 3: Analyze<br/>6 parallel LLM reviewers"]
 
-```
-User --> POST /api/v1/audit --> Orchestrator (App Platform)
-                                       |
-                                 Warm Pool Router
-                                 /              \
-                          Warm Droplet      New Droplet
-                              |                 |
-                         Worker Daemon     Worker Daemon
-                              |                 |
-                         CodeScope 7-Layer Audit
-                         |-- SAST (40+ patterns)
-                         |-- SCA (dependency CVEs)
-                         |-- Secrets (regex scan)
-                         |-- Licenses (compliance)
-                         |-- Tests (coverage analysis)
-                         |-- Repo Health (structure)
-                         +-- AI Synthesis (Gradient AI)
-                              |
-                         Results --> Spaces (S3)
-                              |
-                         Droplet stays warm 55 min
-                         (reused for next audit, same cost)
+    I --> I1[Auth & Access]
+    I --> I2[Injection & Input]
+    I --> I3[AI Security]
+    I --> I4[Secrets & Config]
+    I --> I5[Dependencies]
+    I --> I6[Error Handling]
+
+    I1 & I2 & I3 & I4 & I5 & I6 --> J["Phase 4: Dynamic Test<br/>Probe running app"]
+    J --> K["Phase 5: Synthesize<br/>3 models merge findings"]
+    K --> L["Report: max 30 findings<br/>with exploit scenarios + fixes"]
+
+    L --> M[Results stored in Spaces]
+    M --> N[Droplet returns to warm pool]
 ```
 
----
+## Quick start
 
-## The 7 Layers
+### Prerequisites
 
-| Layer | What It Scans | Unique to CodeScope |
-|-------|--------------|---------------------|
-| **SAST** | SQL injection, XSS, eval(), command injection, SSRF, path traversal | AI-specific: missing input validation, hallucinated imports, tutorial code in production |
-| **SCA** | Dependency CVEs via npm audit / pip-audit / cargo audit | Hallucinated package detection (slopsquatting) |
-| **Secrets** | AWS keys, API tokens, private keys, .env files, high-entropy strings | Scans git history, not just HEAD |
-| **Licenses** | GPL in MIT projects, unknown or missing licenses | Flags copyleft contamination risk |
-| **Tests** | Test framework detection, coverage analysis, test-to-code ratio | Flags zero-test repos shipping to production |
-| **Repo Health** | README, .gitignore, CI/CD, lockfile, Dockerfile, linting config | Rate limiting, validation libraries, auth middleware checks |
-| **AI Synthesis** | Gradient AI reads ALL findings, prioritizes, explains in plain English | Cross-layer correlation, dedicated AI Code Safety section |
+- Python 3.11+
+- A [DigitalOcean account](https://cloud.digitalocean.com) with:
+  - API token
+  - Spaces bucket + access keys
+  - Gradient AI model access key
 
----
-
-## AI Code Safety -- A New Scanning Category
-
-CodeScope introduces four scanning categories that do not exist in traditional SAST tools:
-
-**Prompt Injection Detection** -- Finds user input concatenated directly into LLM prompt templates. Patterns like `f"Summarize: {user_input}"` passed to an LLM API are flagged as high-severity.
-
-**Hallucinated Dependencies** -- Checks whether imported packages actually exist on npm and PyPI. AI models frequently generate imports for packages that sound plausible but do not exist, creating supply chain attack vectors (slopsquatting).
-
-**AI Anti-Patterns** -- Catches missing input validation, empty catch blocks, overly permissive CORS/defaults, and tutorial-quality code (hardcoded credentials, TODO-as-implementation, placeholder error handling).
-
-**LLM Output Misuse** -- Detects LLM output fed directly into dangerous sinks: `eval()`, `innerHTML`, SQL queries, shell commands, and `dangerouslySetInnerHTML`. AI-generated code rarely sanitizes LLM responses before use.
-
----
-
-## Why Ephemeral Droplets?
-
-| Concern | How Ephemeral Addresses It |
-|---------|---------------------------|
-| **Isolation** | Full VM -- git clone, install any tool, run any scanner. No shared container risk. |
-| **Privacy** | Code destroyed after audit. Nothing persists on disk or in memory. |
-| **Speed** | Warm pool reuses Droplets within their billing hour. First audit: ~30s boot. Subsequent: 0s (instant). |
-| **Cost** | $0.009 per audit. DigitalOcean bills hourly; warm pool maximizes each hour. |
-
-The warm pool architecture is key: DigitalOcean charges a minimum of 1 hour per Droplet. A 30-second audit costs the same as a 55-minute audit. Instead of create-use-destroy, CodeScope keeps Droplets alive for 55 minutes and routes subsequent audits to idle workers. One Droplet can serve dozens of audits before being reaped.
-
----
-
-## DigitalOcean Services Used
-
-| Service | Purpose |
-|---------|---------|
-| **Gradient AI** (Serverless Inference) | AI synthesis of findings via Llama 3.3 70B (OpenAI-compatible API) |
-| **Droplets** | Ephemeral audit VMs with warm pool architecture |
-| **Spaces** | S3-compatible result storage (reports, findings, logs) |
-| **App Platform** | Orchestrator hosting (FastAPI + React dashboard via Docker) |
-| **Container Registry** (DOCR) | Docker image deployment for the orchestrator |
-| **Cloud Firewalls** | Network isolation for audit Droplets |
-| **Monitoring** | Droplet resource metrics and health checks |
-| **Snapshots** | Pre-built worker images (`ephemeral-lean-v3`) with Python 3.11, Node.js 18, and audit tooling for fast boot |
-
----
-
-## Quick Start
+### Setup
 
 ```bash
-# Clone
 git clone https://github.com/chopratejas/ephemeral-ai
 cd ephemeral-ai
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Configure
 cp .env.example .env
-# Edit .env with your DigitalOcean API token, Spaces credentials,
-# and Gradient AI key
+```
 
-# Run the orchestrator
+Edit `.env` with your keys:
+
+```env
+DIGITALOCEAN_API_TOKEN=dop_v1_...
+SPACES_KEY=DO...
+SPACES_SECRET=...
+SPACES_BUCKET=ephemeral-ai
+SPACES_REGION=sfo3
+GRADIENT_MODEL_ACCESS_KEY=dg_...
+ORCHESTRATOR_URL=http://localhost:8000
+```
+
+### Run
+
+```bash
 uvicorn orchestrator.main:app --port 8000
+```
 
-# Submit a security audit
+### Submit an audit
+
+```bash
 curl -X POST http://localhost:8000/api/v1/audit \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/expressjs/cors"}'
 ```
 
-The dashboard is available at `http://localhost:8000` after starting the orchestrator. To develop the dashboard separately:
+Poll for results:
+
+```bash
+curl http://localhost:8000/api/v1/tasks/{task_id}
+```
+
+### Dashboard
 
 ```bash
 cd dashboard
@@ -134,87 +101,75 @@ npm install
 npm run dev
 ```
 
----
+Open `http://localhost:5173`. Paste a repo URL. Watch it scan.
 
-## API Reference
+## API
 
-```
-POST /api/v1/audit         Submit a CodeScope security audit for a GitHub repo
-GET  /api/v1/tasks/{id}    Get audit status, phases, and results
-POST /api/v1/tasks         Submit a general code execution task
-GET  /api/v1/stats         Platform statistics (costs, pool state, task counts)
-GET  /health               Health check with warm pool status
-WS   /ws/tasks/{id}        Real-time WebSocket stream of audit progress
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/audit` | POST | Submit a security audit |
+| `/api/v1/tasks/{id}` | GET | Get task status and results |
+| `/api/v1/tasks/{id}/report` | GET | Get parsed findings + report |
+| `/api/v1/findings/fix` | POST | Apply a fix on the Droplet |
+| `/api/v1/findings/create-pr` | POST | Create a GitHub PR from a fix |
+| `/api/v1/audits/recent` | GET | Global audit feed |
+| `/api/v1/stats` | GET | Platform statistics |
+| `/health` | GET | Health check + warm pool status |
 
-**Example: Submit an audit**
-```bash
-curl -X POST https://ephemeral-ai-dgdbw.ondigitalocean.app/api/v1/audit \
-  -H "Content-Type: application/json" \
-  -d '{"repo_url": "https://github.com/juice-shop/juice-shop", "branch": "main"}'
-```
-
-**Example: Check results**
-```bash
-curl https://ephemeral-ai-dgdbw.ondigitalocean.app/api/v1/tasks/{task_id}
-```
-
----
-
-## Cost Analysis
+## Architecture
 
 ```
-Traditional penetration test:    $5,000 - $50,000
-Commercial SAST tool:            $100 - $500/month
-CodeScope per audit:             $0.009
-                                 (DigitalOcean Droplet: $0.00893/hr,
-                                  amortized across warm pool reuse)
+orchestrator/
+├── main.py              # FastAPI API (18 routes)
+├── codescope.py         # v3 audit engine (LLM-first, 5 phases)
+├── worker_daemon.py     # Long-lived Droplet daemon
+├── scout.py             # Pre-audit repo sizing
+├── warm_pool.py         # Droplet reuse within billing hour
+├── task_router.py       # Route to warm or new Droplets
+├── droplet_manager.py   # DigitalOcean Droplet lifecycle
+├── spaces.py            # DigitalOcean Spaces storage
+├── audit_store.py       # Persist audit history
+├── cloud_init.py        # Droplet bootstrap script
+├── neural_gateway.py    # Gradient AI integration
+├── config.py            # Environment config
+├── models.py            # Data models
+├── security.py          # Rate limiting + budget
+├── cost_tracker.py      # Cost calculation
+├── pipeline.py          # Multi-step pipelines (future)
+└── websocket.py         # Real-time events
+
+dashboard/
+└── src/
+    ├── App.tsx           # React app
+    ├── api.ts            # Backend client
+    └── components/       # UI components
 ```
 
-At 100 audits/month, CodeScope costs under $1. The warm pool ensures each Droplet is reused for its full billing hour, driving per-audit cost toward zero as usage increases.
+## DigitalOcean services used
 
----
+| Service | Purpose |
+|---------|---------|
+| Gradient AI | LLM security analysis (3 models in parallel) |
+| Droplets | Ephemeral audit VMs with warm pool reuse |
+| Spaces | Result storage, dashboard hosting, audit history |
+| App Platform | API hosting via Container Registry |
+| Snapshots | Pre-built images for fast Droplet boot |
 
-## Tech Stack
+## Environment variables
 
-| Component | Technology |
-|-----------|-----------|
-| **Backend** | Python 3.11, FastAPI 0.115, Pydantic v2, uvicorn |
-| **AI** | DigitalOcean Gradient AI (Llama 3.3 70B) via OpenAI-compatible SDK |
-| **Compute** | DigitalOcean Droplets (pre-built snapshots, warm pool, cloud-init) |
-| **Storage** | DigitalOcean Spaces (S3-compatible, presigned URL uploads) |
-| **Hosting** | DigitalOcean App Platform (Docker via DOCR) |
-| **Frontend** | React 18, TypeScript, Tailwind CSS, Vite |
-| **IaC** | DigitalOcean API via pydo SDK, cloud-init for Droplet provisioning |
-
----
-
-## Project Structure
-
-```
-ephemeral-ai/
-  orchestrator/
-    main.py             # FastAPI app, endpoints, task lifecycle
-    codescope.py        # 7-layer audit engine (runs inside Droplet)
-    warm_pool.py        # Warm pool manager with billing-aware reuse
-    worker_daemon.py    # Long-lived multi-task executor for Droplets
-    neural_gateway.py   # Gradient AI integration for manifest generation
-    droplet_manager.py  # DigitalOcean Droplet CRUD via pydo
-    spaces.py           # Spaces upload/download with presigned URLs
-    task_router.py      # Warm pool routing decisions
-    config.py           # Environment-based configuration
-    models.py           # Pydantic models for API and internal state
-    security.py         # Rate limiting, budget tracking, input validation
-    cost_tracker.py     # Per-task cost calculation
-  dashboard/
-    src/                # React + TypeScript frontend
-    vite.config.ts      # Vite build configuration
-  Dockerfile            # Orchestrator container image
-  requirements.txt      # Python dependencies
-```
-
----
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DIGITALOCEAN_API_TOKEN` | Yes | DO API token for Droplet management |
+| `SPACES_KEY` | Yes | Spaces access key |
+| `SPACES_SECRET` | Yes | Spaces secret key |
+| `SPACES_BUCKET` | Yes | Spaces bucket name |
+| `SPACES_REGION` | Yes | Spaces region (e.g. `sfo3`) |
+| `GRADIENT_MODEL_ACCESS_KEY` | Yes | Gradient AI model key |
+| `ORCHESTRATOR_URL` | Yes | Public URL of the orchestrator |
+| `MAX_CONCURRENT_DROPLETS` | No | Max Droplets (default: 5) |
+| `MAX_DROPLET_AGE_MINUTES` | No | Droplet lifetime (default: 55) |
+| `DAILY_BUDGET_USD` | No | Daily spend cap (default: 5.0) |
 
 ## License
 
-MIT -- see [LICENSE](LICENSE).
+MIT
